@@ -1,0 +1,15 @@
+{
+  "name": "gendwh-knowledge-assistant",
+  "version": "0.1.0",
+  "private": true,
+  "description": "RAG-powered Q&A web app for GenDWH documentation",
+  "scripts": {
+    "dev": "swa start src --api-location api",
+    "build": "echo 'No build step — static HTML'",
+    "deploy": "swa deploy --env production"
+  },
+  "devDependencies": {
+    "@azure/static-web-apps-cli": "^2.0.0"
+  }
+}
+

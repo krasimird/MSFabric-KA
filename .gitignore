@@ -1,0 +1,32 @@
+# Build output
+build/
+
+# Node
+node_modules/
+
+# Environment / secrets
+.env
+.env.local
+
+# Knowledge base (generated, large)
+webapp/public/data/gendwh_knowledge.jsonl
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+*.egg-info/
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
