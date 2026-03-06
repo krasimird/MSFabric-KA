@@ -122,24 +122,21 @@ print("✓ Discovery function loaded")
 # CELL 3 ── Definition Extraction ───
 
 def extract_definitions(workspaces, token):
-    """Call getDefinition for every item that supports it. Store raw payload."""
+    """Call getDefinition for EVERY item. Items that don't support it get an error entry."""
     print("\n" + "═" * 60)
     print("STEP 2 — DEFINITION EXTRACTION")
     print("═" * 60)
 
-    DEFINITION_TYPES = {
-        "DataPipeline", "Notebook", "SemanticModel",
-        "Report", "PaginatedReport",
-    }
+    results = {}  # item_id -> definition parts or error dict
+    ok = 0
+    skipped = 0
 
-    results = {}  # item_id -> definition parts
     for ws in workspaces:
         ws_id = ws["id"]
         for item in ws["items"]:
-            if item["type"] not in DEFINITION_TYPES:
-                continue
             item_id = item["id"]
-            label = f"{item['displayName']} ({item['type']})"
+            item_type = item["type"]
+            label = f"{item['displayName']} ({item_type})"
             try:
                 resp = fabric_api_post(
                     f"/workspaces/{ws_id}/items/{item_id}/getDefinition",
@@ -159,12 +156,14 @@ def extract_definitions(workspaces, token):
                         "payload": decoded,
                     })
                 results[item_id] = decoded_parts
+                ok += 1
                 print(f"  ✓ {label}: {len(decoded_parts)} part(s)")
             except Exception as e:
+                skipped += 1
                 print(f"  ⚠ {label}: {e}")
-                results[item_id] = {"error": str(e)}
+                results[item_id] = {"error": str(e), "item_type": item_type}
 
-    print(f"\n  Definitions extracted: {len(results)}")
+    print(f"\n  Definitions: {ok} extracted, {skipped} unsupported/failed")
     return results
 
 
