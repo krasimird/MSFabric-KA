@@ -743,40 +743,519 @@ def phase_1_metadata_extraction(inventory=None):
     except Exception as e:
         print(f"   ⚠ Bronze metadata error: {e}")
 
+    # ── 1e: Warehouse objects ─────────────────────────────────────────────────
+    warehouses = [i for i in inventory if i["item_type"] == "Warehouse"]
+    all_wh_objects = []
+    if warehouses:
+        print(f"\n🏭 Extracting warehouse objects ({len(warehouses)} warehouses)...")
+        for wh in warehouses:
+            print(f"   📦 {wh['item_name']}")
+            objs = extract_warehouse(wh["workspace_id"], wh["item_id"], wh["item_name"], token)
+            all_wh_objects.extend(objs)
+            tbl_c = sum(1 for o in objs if o["object_type"] == "table")
+            view_c = sum(1 for o in objs if o["object_type"] == "view")
+            sproc_c = sum(1 for o in objs if o["object_type"] == "sproc")
+            print(f"      {tbl_c} tables, {view_c} views, {sproc_c} sprocs")
+        if all_wh_objects:
+            df = spark.createDataFrame(all_wh_objects)
+            df.write.format("delta").mode("overwrite").saveAsTable("doc_warehouse_objects")
+            print(f"   💾 Saved {len(all_wh_objects)} objects to doc_warehouse_objects")
+
+    # ── 1f: Notebook definitions ──────────────────────────────────────────────
+    notebooks = [i for i in inventory if i["item_type"] == "Notebook"]
+    all_nb_records = []
+    if notebooks:
+        print(f"\n📓 Extracting notebook definitions ({len(notebooks)} notebooks)...")
+        for nb in notebooks:
+            print(f"   📝 {nb['item_name']}")
+            recs = extract_notebooks(nb["workspace_id"], nb["item_id"], nb["item_name"], token)
+            for r in recs:
+                r["workspace_name"] = nb["workspace_name"]
+            all_nb_records.extend(recs)
+        if all_nb_records:
+            df = spark.createDataFrame(all_nb_records)
+            df.write.format("delta").mode("overwrite").saveAsTable("doc_notebook_definitions")
+            print(f"   💾 Saved {len(all_nb_records)} notebooks to doc_notebook_definitions")
+
+    # ── 1g: Semantic models ───────────────────────────────────────────────────
+    sem_models = [i for i in inventory if i["item_type"] == "SemanticModel"]
+    all_sm_records = []
+    if sem_models:
+        print(f"\n📊 Extracting semantic models ({len(sem_models)} models)...")
+        for sm in sem_models:
+            print(f"   📈 {sm['item_name']}")
+            recs = extract_semantic_models(sm["workspace_id"], sm["item_id"], sm["item_name"], token)
+            all_sm_records.extend(recs)
+            m_c = sum(1 for r in recs if r["object_type"] == "measure")
+            r_c = sum(1 for r in recs if r["object_type"] == "relationship")
+            print(f"      {m_c} measures, {r_c} relationships")
+        if all_sm_records:
+            df = spark.createDataFrame(all_sm_records)
+            df.write.format("delta").mode("overwrite").saveAsTable("doc_semantic_models")
+            print(f"   💾 Saved {len(all_sm_records)} objects to doc_semantic_models")
+
+    # ── 1h: Report definitions ────────────────────────────────────────────────
+    reports = [i for i in inventory
+               if i["item_type"] in ("Report", "PaginatedReport")]
+    all_rpt_records = []
+    if reports:
+        print(f"\n📄 Extracting report definitions ({len(reports)} reports)...")
+        for rpt in reports:
+            print(f"   📋 {rpt['item_name']}")
+            recs = extract_reports(rpt["workspace_id"], rpt["item_id"], rpt["item_name"], token)
+            all_rpt_records.extend(recs)
+        if all_rpt_records:
+            df = spark.createDataFrame(all_rpt_records)
+            df.write.format("delta").mode("overwrite").saveAsTable("doc_report_definitions")
+            print(f"   💾 Saved {len(all_rpt_records)} reports to doc_report_definitions")
+
+    # ── 1i: Variable libraries ────────────────────────────────────────────────
+    var_libs = [i for i in inventory if i["item_type"] == "VariableLibrary"]
+    all_vl_records = []
+    if var_libs:
+        print(f"\n📚 Extracting variable libraries ({len(var_libs)} libraries)...")
+        for vl in var_libs:
+            print(f"   📖 {vl['item_name']}")
+            recs = extract_variable_library(vl["workspace_id"], vl["item_id"], vl["item_name"], token)
+            all_vl_records.extend(recs)
+        if all_vl_records:
+            df = spark.createDataFrame(all_vl_records)
+            df.write.format("delta").mode("overwrite").saveAsTable("doc_variable_library")
+            print(f"   💾 Saved {len(all_vl_records)} variables to doc_variable_library")
+
     print("\n✓ Phase 1 complete")
     return {
-        "activities": all_activities,
-        "tables": all_tables,
-        "queries": queries,
-        "bronze_meta": bronze_meta,
+        "activities":      all_activities,
+        "tables":          all_tables,
+        "queries":         queries,
+        "bronze_meta":     bronze_meta,
+        "warehouse_objects": all_wh_objects,
+        "notebooks":       all_nb_records,
+        "semantic_models": all_sm_records,
+        "reports":         all_rpt_records,
+        "variable_library": all_vl_records,
     }
 
 
-# ── Future item-type extractors (stubs) ──────────────────────────────────────
+# ── Item-type extractors ──────────────────────────────────────────────────────
 
-def extract_warehouse(ws_id, item_id, token):
-    """Extract Warehouse metadata (schemas, tables, views, stored procedures). TODO: implement."""
-    pass
+def extract_warehouse(ws_id, item_id, item_name, token):
+    """
+    Extract Warehouse metadata: tables, views (with SQL definitions), stored procedures.
+    Uses Fabric SQL Analytics endpoint via Spark SQL to query INFORMATION_SCHEMA.
+    Returns list of dicts with schema matching doc_warehouse_objects.
+    """
+    objects = []
+    wh_name = item_name
+
+    # Tables
+    try:
+        rows = spark.sql(
+            f"SELECT TABLE_SCHEMA, TABLE_NAME FROM {wh_name}.INFORMATION_SCHEMA.TABLES "
+            f"WHERE TABLE_TYPE = 'BASE TABLE'"
+        ).collect()
+        for r in rows:
+            schema_json = []
+            try:
+                cols = spark.sql(
+                    f"SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, ORDINAL_POSITION "
+                    f"FROM {wh_name}.INFORMATION_SCHEMA.COLUMNS "
+                    f"WHERE TABLE_SCHEMA = '{r['TABLE_SCHEMA']}' AND TABLE_NAME = '{r['TABLE_NAME']}' "
+                    f"ORDER BY ORDINAL_POSITION"
+                ).collect()
+                schema_json = [
+                    {"name": c["COLUMN_NAME"], "type": c["DATA_TYPE"],
+                     "nullable": c["IS_NULLABLE"], "ordinal": c["ORDINAL_POSITION"]}
+                    for c in cols
+                ]
+            except Exception:
+                pass
+            objects.append({
+                "workspace_id": ws_id, "warehouse": wh_name,
+                "object_name": f"{r['TABLE_SCHEMA']}.{r['TABLE_NAME']}",
+                "object_type": "table", "definition_sql": "",
+                "schema_json": json.dumps(schema_json),
+            })
+    except Exception as e:
+        print(f"      ⚠ Warehouse tables error: {e}")
+
+    # Views (with definition SQL)
+    try:
+        rows = spark.sql(
+            f"SELECT TABLE_SCHEMA, TABLE_NAME, VIEW_DEFINITION "
+            f"FROM {wh_name}.INFORMATION_SCHEMA.VIEWS"
+        ).collect()
+        for r in rows:
+            objects.append({
+                "workspace_id": ws_id, "warehouse": wh_name,
+                "object_name": f"{r['TABLE_SCHEMA']}.{r['TABLE_NAME']}",
+                "object_type": "view",
+                "definition_sql": (r["VIEW_DEFINITION"] or "")[:8000],
+                "schema_json": "",
+            })
+    except Exception as e:
+        print(f"      ⚠ Warehouse views error: {e}")
+
+    # Stored procedures
+    try:
+        rows = spark.sql(
+            f"SELECT ROUTINE_SCHEMA, ROUTINE_NAME, ROUTINE_DEFINITION "
+            f"FROM {wh_name}.INFORMATION_SCHEMA.ROUTINES "
+            f"WHERE ROUTINE_TYPE = 'PROCEDURE'"
+        ).collect()
+        for r in rows:
+            objects.append({
+                "workspace_id": ws_id, "warehouse": wh_name,
+                "object_name": f"{r['ROUTINE_SCHEMA']}.{r['ROUTINE_NAME']}",
+                "object_type": "sproc",
+                "definition_sql": (r["ROUTINE_DEFINITION"] or "")[:8000],
+                "schema_json": "",
+            })
+    except Exception as e:
+        print(f"      ⚠ Warehouse sprocs error: {e}")
+
+    return objects
 
 
-def extract_notebooks(ws_id, item_id, token):
-    """Extract Notebook cell content and dependencies. TODO: implement."""
-    pass
+def extract_notebooks(ws_id, item_id, item_name, token):
+    """
+    Extract Notebook content via Fabric REST API getDefinition.
+    Decodes Base64 payload → parses .ipynb JSON → extracts cells.
+    Returns list of dicts with schema matching doc_notebook_definitions.
+    """
+    records = []
+    try:
+        result = fabric_api_post(
+            f"/workspaces/{ws_id}/items/{item_id}/getDefinition", token=token
+        )
+        if not result:
+            return records
+
+        parts = result.get("definition", {}).get("parts", [])
+        nb_json = None
+        for part in parts:
+            if part.get("path", "").endswith(".ipynb"):
+                payload = part.get("payload", "")
+                decoded = base64.b64decode(payload).decode("utf-8")
+                nb_json = json.loads(decoded)
+                break
+
+        if not nb_json:
+            return records
+
+        cells = nb_json.get("cells", [])
+        code_cells = [c for c in cells if c.get("cell_type") == "code"]
+        md_cells = [c for c in cells if c.get("cell_type") == "markdown"]
+
+        # Extract notebook-level parameters from metadata
+        nb_meta = nb_json.get("metadata", {})
+        params = nb_meta.get("widgets", {}).get("application/vnd.databricks.v1+cell", {})
+        if not params:
+            params = nb_meta.get("parameters", {})
+
+        source_code = "\n".join(
+            "".join(c.get("source", [])) for c in code_cells
+        )
+        markdown_content = "\n".join(
+            "".join(c.get("source", [])) for c in md_cells
+        )
+
+        records.append({
+            "workspace_id":   ws_id,
+            "workspace_name": "",   # filled by caller
+            "notebook_name":  item_name,
+            "parameters":     json.dumps(params)[:4000],
+            "cell_count":     len(cells),
+            "source_code":    source_code[:32000],
+            "markdown_cells": markdown_content[:16000],
+        })
+    except Exception as e:
+        print(f"      ⚠ Notebook extraction error: {e}")
+
+    return records
 
 
-def extract_semantic_models(ws_id, item_id, token):
-    """Extract Semantic Model measures, relationships, and hierarchies. TODO: implement."""
-    pass
+def extract_semantic_models(ws_id, item_id, item_name, token):
+    """
+    Extract Semantic Model definition via Fabric REST API getDefinition.
+    Parses TMDL/TMSL for measures (DAX), relationships, and calculated columns.
+    Returns list of dicts with schema matching doc_semantic_models.
+    """
+    records = []
+    try:
+        result = fabric_api_post(
+            f"/workspaces/{ws_id}/items/{item_id}/getDefinition",
+            body={"format": "TMDL"},
+            token=token,
+        )
+        if not result:
+            return records
+
+        parts = result.get("definition", {}).get("parts", [])
+
+        for part in parts:
+            path = part.get("path", "")
+            payload = part.get("payload", "")
+            try:
+                content = base64.b64decode(payload).decode("utf-8")
+            except Exception:
+                continue
+
+            # Parse .tmdl table files for measures and calculated columns
+            if "/tables/" in path.lower() and path.endswith(".tmdl"):
+                table_name = path.split("/")[-1].replace(".tmdl", "")
+                _parse_tmdl_table(records, ws_id, item_name, table_name, content)
+
+            # Parse relationships file
+            if path.lower().endswith("relationships.tmdl") or "/relationships/" in path.lower():
+                _parse_tmdl_relationships(records, ws_id, item_name, content)
+
+    except Exception as e:
+        print(f"      ⚠ Semantic model extraction error: {e}")
+
+    return records
 
 
-def extract_reports(ws_id, item_id, token):
-    """Extract Power BI report pages, visuals, and data sources. TODO: implement."""
-    pass
+def _parse_tmdl_table(records, ws_id, model_name, table_name, content):
+    """Parse a TMDL table definition for measures and calculated columns."""
+    lines = content.split("\n")
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+
+        # Detect measure blocks
+        if line.startswith("measure "):
+            measure_name = line.replace("measure ", "").strip().rstrip("=").strip()
+            expression_lines = []
+            format_string = ""
+            i += 1
+            while i < len(lines) and not (lines[i].strip().startswith("measure ") and "=" in lines[i]):
+                l = lines[i].strip()
+                if l.startswith("formatString:"):
+                    format_string = l.split(":", 1)[1].strip().strip('"').strip("'")
+                elif not l.startswith("annotation ") and not l.startswith("displayFolder"):
+                    if l and not l.startswith("lineageTag:"):
+                        expression_lines.append(l)
+                # Break if we hit next top-level block
+                if lines[i] and not lines[i][0].isspace() and i > 0:
+                    break
+                i += 1
+            records.append({
+                "workspace_id": ws_id, "model_name": model_name,
+                "object_type": "measure", "object_name": measure_name,
+                "expression": "\n".join(expression_lines)[:4000],
+                "format_string": format_string,
+                "source_table": table_name, "target_table": "",
+            })
+            continue
+
+        # Detect calculated columns
+        if line.startswith("column ") and "=" in line:
+            col_parts = line.replace("column ", "").split("=", 1)
+            col_name = col_parts[0].strip()
+            expression = col_parts[1].strip() if len(col_parts) > 1 else ""
+            records.append({
+                "workspace_id": ws_id, "model_name": model_name,
+                "object_type": "calculated_column", "object_name": col_name,
+                "expression": expression[:4000],
+                "format_string": "", "source_table": table_name, "target_table": "",
+            })
+
+        i += 1
 
 
-def extract_variable_library(ws_id, item_id, token):
-    """Extract Variable Library entries and their values. TODO: implement."""
-    pass
+def _parse_tmdl_relationships(records, ws_id, model_name, content):
+    """Parse TMDL relationship definitions."""
+    lines = content.split("\n")
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        if line.startswith("relationship "):
+            rel_name = line.replace("relationship ", "").strip()
+            from_table = from_col = to_table = to_col = ""
+            i += 1
+            while i < len(lines) and (lines[i].startswith(" ") or lines[i].startswith("\t")):
+                l = lines[i].strip()
+                if l.startswith("fromColumn:"):
+                    from_col = l.split(":", 1)[1].strip()
+                elif l.startswith("fromTable:"):
+                    from_table = l.split(":", 1)[1].strip()
+                elif l.startswith("toColumn:"):
+                    to_col = l.split(":", 1)[1].strip()
+                elif l.startswith("toTable:"):
+                    to_table = l.split(":", 1)[1].strip()
+                i += 1
+            records.append({
+                "workspace_id": ws_id, "model_name": model_name,
+                "object_type": "relationship", "object_name": rel_name,
+                "expression": f"{from_table}.{from_col} -> {to_table}.{to_col}",
+                "format_string": "", "source_table": from_table, "target_table": to_table,
+            })
+            continue
+        i += 1
+
+
+def extract_reports(ws_id, item_id, item_name, token):
+    """
+    Extract Report definition via Fabric REST API getDefinition.
+    Parses report.json for pages, semantic model binding, filters, bookmarks.
+    Handles both Report (.pbir) and PaginatedReport (.rdl) types.
+    Returns list of dicts with schema matching doc_report_definitions.
+    """
+    records = []
+    try:
+        result = fabric_api_post(
+            f"/workspaces/{ws_id}/items/{item_id}/getDefinition", token=token
+        )
+        if not result:
+            return records
+
+        parts = result.get("definition", {}).get("parts", [])
+        report_type = "Report"
+        semantic_model = ""
+        pages = []
+        filters = []
+        bookmarks = []
+
+        for part in parts:
+            path = part.get("path", "")
+            payload = part.get("payload", "")
+            try:
+                content = base64.b64decode(payload).decode("utf-8")
+            except Exception:
+                continue
+
+            # Detect PaginatedReport via RDL XML
+            if path.lower().endswith(".rdl"):
+                report_type = "PaginatedReport"
+                # Extract data source from RDL XML (basic parsing)
+                ds_match = re.findall(r"<DataSourceName>(.*?)</DataSourceName>", content)
+                if ds_match:
+                    semantic_model = ds_match[0]
+                # Extract report sections/pages from RDL
+                page_matches = re.findall(r"<ReportSection[^>]*>(.*?)</ReportSection>", content, re.DOTALL)
+                for idx, _ in enumerate(page_matches):
+                    pages.append({"ordinal": idx, "name": f"Page {idx + 1}"})
+                records.append({
+                    "workspace_id": ws_id, "report_name": item_name,
+                    "report_type": report_type, "semantic_model": semantic_model,
+                    "pages": json.dumps(pages), "filters": json.dumps(filters),
+                    "bookmarks": json.dumps(bookmarks),
+                })
+                return records
+
+            # Standard report definition.pbir or report.json
+            if path.lower().endswith((".pbir", "report.json")):
+                try:
+                    rjson = json.loads(content)
+                    semantic_model = (
+                        rjson.get("datasetReference", {}).get("byPath", {}).get("path", "")
+                        or rjson.get("datasetReference", {}).get("byConnection", {}).get("connectionString", "")
+                    )
+                except Exception:
+                    pass
+
+            # Parse pages
+            if "/pages/" in path.lower() and path.lower().endswith(".json"):
+                try:
+                    pjson = json.loads(content)
+                    pages.append({
+                        "name": pjson.get("displayName", path.split("/")[-1]),
+                        "ordinal": pjson.get("ordinal", len(pages)),
+                        "visual_count": len(pjson.get("visualContainers", [])),
+                    })
+                except Exception:
+                    pass
+
+            # Parse filters
+            if "filters" in path.lower() and path.lower().endswith(".json"):
+                try:
+                    fjson = json.loads(content)
+                    if isinstance(fjson, list):
+                        filters.extend(fjson)
+                    else:
+                        filters.append(fjson)
+                except Exception:
+                    pass
+
+            # Parse bookmarks
+            if "bookmarks" in path.lower() and path.lower().endswith(".json"):
+                try:
+                    bjson = json.loads(content)
+                    if isinstance(bjson, list):
+                        bookmarks.extend(bjson)
+                    else:
+                        bookmarks.append(bjson)
+                except Exception:
+                    pass
+
+        records.append({
+            "workspace_id": ws_id, "report_name": item_name,
+            "report_type": report_type, "semantic_model": semantic_model,
+            "pages": json.dumps(pages), "filters": json.dumps(filters),
+            "bookmarks": json.dumps(bookmarks),
+        })
+
+    except Exception as e:
+        print(f"      ⚠ Report extraction error: {e}")
+
+    return records
+
+
+def extract_variable_library(ws_id, item_id, item_name, token):
+    """
+    Extract Variable Library entries via Fabric REST API.
+    Returns list of dicts with schema matching doc_variable_library.
+    """
+    records = []
+    try:
+        result = fabric_api_post(
+            f"/workspaces/{ws_id}/items/{item_id}/getDefinition", token=token
+        )
+        if not result:
+            return records
+
+        parts = result.get("definition", {}).get("parts", [])
+        for part in parts:
+            payload = part.get("payload", "")
+            try:
+                content = base64.b64decode(payload).decode("utf-8")
+                vlib = json.loads(content)
+            except Exception:
+                continue
+
+            # Variable library JSON can be a dict with variable entries
+            variables = vlib if isinstance(vlib, dict) else {}
+            if isinstance(vlib, dict) and "variables" in vlib:
+                variables = vlib["variables"]
+
+            if isinstance(variables, dict):
+                for var_name, var_val in variables.items():
+                    v_type = type(var_val).__name__
+                    if isinstance(var_val, dict):
+                        v_type = var_val.get("type", "object")
+                        v_value = json.dumps(var_val.get("value", var_val))
+                    else:
+                        v_value = str(var_val)
+                    records.append({
+                        "workspace_id": ws_id, "library_name": item_name,
+                        "variable_name": var_name, "variable_value": v_value[:4000],
+                        "variable_type": v_type,
+                    })
+            elif isinstance(variables, list):
+                for v in variables:
+                    if isinstance(v, dict):
+                        records.append({
+                            "workspace_id": ws_id, "library_name": item_name,
+                            "variable_name": v.get("name", ""),
+                            "variable_value": str(v.get("value", ""))[:4000],
+                            "variable_type": v.get("type", "string"),
+                        })
+
+    except Exception as e:
+        print(f"      ⚠ Variable library extraction error: {e}")
+
+    return records
 
 
 # CELL 6 ── Phase 2 — AI Analysis ───
