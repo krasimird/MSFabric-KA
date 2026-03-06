@@ -752,6 +752,32 @@ def phase_1_metadata_extraction(inventory=None):
     }
 
 
+# ── Future item-type extractors (stubs) ──────────────────────────────────────
+
+def extract_warehouse(ws_id, item_id, token):
+    """Extract Warehouse metadata (schemas, tables, views, stored procedures). TODO: implement."""
+    pass
+
+
+def extract_notebooks(ws_id, item_id, token):
+    """Extract Notebook cell content and dependencies. TODO: implement."""
+    pass
+
+
+def extract_semantic_models(ws_id, item_id, token):
+    """Extract Semantic Model measures, relationships, and hierarchies. TODO: implement."""
+    pass
+
+
+def extract_reports(ws_id, item_id, token):
+    """Extract Power BI report pages, visuals, and data sources. TODO: implement."""
+    pass
+
+
+def extract_variable_library(ws_id, item_id, token):
+    """Extract Variable Library entries and their values. TODO: implement."""
+    pass
+
 
 # CELL 6 ── Phase 2 — AI Analysis ───
 
