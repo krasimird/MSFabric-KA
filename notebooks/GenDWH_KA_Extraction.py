@@ -316,29 +316,59 @@ def extract_schemas(workspaces, token):
 
 
 def _extract_lakehouse_schema(lakehouse_name):
-    """Use Spark SQL to list tables and describe columns."""
-    tables = []
+    """Extract schema using bulk queries: INFORMATION_SCHEMA or SHOW+DESCRIBE fallback."""
+    tables_map = {}  # table_name -> {columns, row_count, ...}
+
+    # ── Strategy 1: bulk column fetch via INFORMATION_SCHEMA ──
     try:
-        rows = spark.sql(f"SHOW TABLES IN {lakehouse_name}").collect()
-        for row in rows:
-            tbl_name = row["tableName"]
-            tbl_info = {"table_name": tbl_name, "columns": [], "row_count": -1}
-            try:
-                cols = spark.sql(f"DESCRIBE TABLE {lakehouse_name}.{tbl_name}").collect()
-                tbl_info["columns"] = [
-                    {"name": c["col_name"], "type": c["data_type"]}
-                    for c in cols if not c["col_name"].startswith("#")
-                ]
-                count_row = spark.sql(
-                    f"SELECT COUNT(*) as cnt FROM {lakehouse_name}.{tbl_name}"
-                ).first()
-                tbl_info["row_count"] = count_row["cnt"]
-            except Exception as e:
-                tbl_info["error"] = str(e)
-            tables.append(tbl_info)
-    except Exception as e:
-        print(f"    ⚠ Error: {e}")
-    return tables
+        col_rows = spark.sql(
+            f"SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, ORDINAL_POSITION "
+            f"FROM {lakehouse_name}.INFORMATION_SCHEMA.COLUMNS "
+            f"ORDER BY TABLE_NAME, ORDINAL_POSITION"
+        ).collect()
+        for c in col_rows:
+            tbl = c["TABLE_NAME"]
+            if tbl not in tables_map:
+                tables_map[tbl] = {"table_name": tbl, "columns": [], "row_count": -1}
+            tables_map[tbl]["columns"].append({
+                "name": c["COLUMN_NAME"], "type": c["DATA_TYPE"],
+                "ordinal": c["ORDINAL_POSITION"],
+            })
+        print(f"    ✓ INFORMATION_SCHEMA: {len(col_rows)} columns across {len(tables_map)} tables")
+    except Exception:
+        # ── Strategy 2: SHOW TABLES + one DESCRIBE per table (no COUNT) ──
+        print(f"    ℹ INFORMATION_SCHEMA unavailable, falling back to SHOW+DESCRIBE")
+        try:
+            show_rows = spark.sql(f"SHOW TABLES IN {lakehouse_name}").collect()
+            for row in show_rows:
+                tbl = row["tableName"]
+                tbl_info = {"table_name": tbl, "columns": [], "row_count": -1}
+                try:
+                    cols = spark.sql(f"DESCRIBE TABLE {lakehouse_name}.{tbl}").collect()
+                    tbl_info["columns"] = [
+                        {"name": c["col_name"], "type": c["data_type"]}
+                        for c in cols if not c["col_name"].startswith("#")
+                    ]
+                except Exception as e:
+                    tbl_info["error"] = str(e)
+                tables_map[tbl] = tbl_info
+            print(f"    ✓ SHOW+DESCRIBE: {len(tables_map)} tables")
+        except Exception as e:
+            print(f"    ⚠ Error listing tables: {e}")
+            return []
+
+    # ── Row counts via DESCRIBE DETAIL (reads Delta log, no data scan) ──
+    for tbl in list(tables_map):
+        try:
+            detail = spark.sql(f"DESCRIBE DETAIL {lakehouse_name}.{tbl}").first()
+            if detail:
+                tables_map[tbl]["row_count"] = detail["numRecords"] if detail["numRecords"] is not None else -1
+                tables_map[tbl]["size_bytes"] = detail["sizeInBytes"] if detail["sizeInBytes"] is not None else -1
+                tables_map[tbl]["num_files"] = detail["numFiles"] if detail["numFiles"] is not None else -1
+        except Exception:
+            pass  # row_count stays -1
+
+    return list(tables_map.values())
 
 
 print("✓ Schema extraction functions loaded")
