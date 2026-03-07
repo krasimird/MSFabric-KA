@@ -17,8 +17,18 @@ CONFIG = {
     "output_path":          "/lakehouse/default/Files/gendwh_raw_export.json",
     "admin_lakehouse_name": "GenDWH_Administration_LH",
     "max_retries":          3,
-    "retry_delay":          2,
+    "retry_delay":          1,
     "api_timeout":          60,
+    "lro_poll_interval":    2,
+    "lro_max_polls":        30,
+
+    # ── Environment filter ────────────────────────────────────────────────────
+    "target_environment":   "Dev",
+    "environment_rules": {
+        "Dev":  ["_WS_D", "_UWS_D", "_UWS"],
+        "Test": ["_WS_T", "_UWS_T"],
+        "Prod": ["_WS_P", "_UWS_P"],
+    },
 }
 
 print("✓ Configuration loaded")
@@ -48,11 +58,12 @@ def fabric_api_get(endpoint, token=None):
 
 
 def fabric_api_post(endpoint, body=None, token=None):
-    """POST to Fabric REST API. Returns parsed JSON or empty dict."""
+    """POST to Fabric REST API. Handles 202 long-running operations via polling."""
     if token is None:
         token = get_fabric_token()
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     url = f"{CONFIG['fabric_api_base']}{endpoint}"
+
     for attempt in range(CONFIG["max_retries"]):
         resp = requests.post(url, headers=headers, json=body or {}, timeout=CONFIG["api_timeout"])
         if resp.status_code == 429:
@@ -60,9 +71,38 @@ def fabric_api_post(endpoint, body=None, token=None):
             print(f"  ⏳ Rate limited, waiting {wait}s...")
             time.sleep(wait)
             continue
+
+        # Long-running operation — poll until complete
+        if resp.status_code == 202:
+            location = resp.headers.get("Location")
+            retry_after = int(resp.headers.get("Retry-After", CONFIG["lro_poll_interval"]))
+            if location:
+                return _poll_lro(location, token, retry_after)
+            # 202 with no Location — return whatever body we got
+            return resp.json() if resp.content else {}
+
         resp.raise_for_status()
         return resp.json() if resp.content else {}
     return {}
+
+
+def _poll_lro(url, token, initial_wait):
+    """Poll a long-running operation URL until it completes."""
+    headers = {"Authorization": f"Bearer {token}"}
+    wait = max(initial_wait, 1)
+
+    for _ in range(CONFIG["lro_max_polls"]):
+        time.sleep(wait)
+        resp = requests.get(url, headers=headers, timeout=CONFIG["api_timeout"])
+
+        if resp.status_code == 200:
+            return resp.json() if resp.content else {}
+        if resp.status_code == 202:
+            wait = int(resp.headers.get("Retry-After", wait))
+            continue
+        resp.raise_for_status()
+
+    raise TimeoutError(f"LRO did not complete after {CONFIG['lro_max_polls']} polls: {url}")
 
 
 def sha256_short(text):
@@ -74,19 +114,33 @@ print("✓ API helpers loaded")
 
 # CELL 2 ── Discovery ───
 
+def _matches_environment(ws_name):
+    """Check if workspace name matches the target environment suffixes."""
+    env = CONFIG["target_environment"]
+    suffixes = CONFIG["environment_rules"].get(env, [])
+    return any(ws_name.endswith(s) for s in suffixes)
+
+
 def discover_workspaces(token):
-    """List all workspaces and their items."""
+    """List workspaces matching target_environment and their items."""
     print("═" * 60)
     print("STEP 1 — DISCOVERY")
     print("═" * 60)
 
     workspaces_raw = fabric_api_get("/workspaces", token)
-    print(f"  Found {len(workspaces_raw)} workspace(s)")
+    env = CONFIG["target_environment"]
+    print(f"  Found {len(workspaces_raw)} workspace(s), filtering for '{env}'")
 
     workspaces = []
+    skipped = 0
     for ws in workspaces_raw:
         ws_id = ws["id"]
         ws_name = ws.get("displayName", ws_id)
+
+        if not _matches_environment(ws_name):
+            skipped += 1
+            continue
+
         print(f"  📁 {ws_name}")
 
         items = []
@@ -113,7 +167,7 @@ def discover_workspaces(token):
         })
 
     total_items = sum(len(ws["items"]) for ws in workspaces)
-    print(f"\n  Total: {len(workspaces)} workspaces, {total_items} items")
+    print(f"\n  Total: {len(workspaces)} workspaces, {total_items} items (skipped {skipped} non-{env})")
     return workspaces
 
 
@@ -142,7 +196,14 @@ def extract_definitions(workspaces, token):
                     f"/workspaces/{ws_id}/items/{item_id}/getDefinition",
                     token=token,
                 )
-                parts = resp.get("definition", {}).get("parts", [])
+                if not resp or not isinstance(resp, dict):
+                    skipped += 1
+                    print(f"  ⚠ {label}: empty response")
+                    results[item_id] = {"error": "empty response", "item_type": item_type}
+                    continue
+
+                definition = resp.get("definition")
+                parts = (definition or {}).get("parts", []) if definition else []
                 decoded_parts = []
                 for part in parts:
                     payload = part.get("payload", "")
@@ -155,9 +216,16 @@ def extract_definitions(workspaces, token):
                         "payloadType": part.get("payloadType", ""),
                         "payload": decoded,
                     })
-                results[item_id] = decoded_parts
-                ok += 1
-                print(f"  ✓ {label}: {len(decoded_parts)} part(s)")
+
+                if decoded_parts:
+                    results[item_id] = decoded_parts
+                    ok += 1
+                    print(f"  ✓ {label}: {len(decoded_parts)} part(s)")
+                else:
+                    # Store raw response for items with non-standard format
+                    results[item_id] = {"raw_response": resp, "item_type": item_type}
+                    ok += 1
+                    print(f"  ✓ {label}: no parts, stored raw response")
             except Exception as e:
                 skipped += 1
                 print(f"  ⚠ {label}: {e}")
@@ -172,12 +240,13 @@ print("✓ Definition extraction function loaded")
 # CELL 4 ── Schema Extraction ───
 
 def extract_schemas(workspaces, token):
-    """Extract table schemas from Lakehouses and Warehouses via Spark SQL."""
+    """Extract table schemas from Lakehouses via Spark SQL. Deduplicates by name."""
     print("\n" + "═" * 60)
     print("STEP 3 — SCHEMA EXTRACTION")
     print("═" * 60)
 
     schemas = {}  # item_id -> list of table dicts
+    extracted_names = set()  # track already-extracted lakehouse/warehouse names
 
     for ws in workspaces:
         for item in ws["items"]:
@@ -186,18 +255,19 @@ def extract_schemas(workspaces, token):
             item_type = item["type"]
 
             if item_type == "Lakehouse":
+                if item_name in extracted_names:
+                    print(f"  ⏭ Lakehouse: {item_name} (already extracted, skipping)")
+                    continue
+                extracted_names.add(item_name)
                 print(f"  📦 Lakehouse: {item_name}")
                 tables = _extract_lakehouse_schema(item_name)
                 schemas[item_id] = tables
                 print(f"    {len(tables)} table(s)")
 
             elif item_type == "Warehouse":
-                print(f"  🏭 Warehouse: {item_name}")
-                tables = _extract_warehouse_schema(item_name)
-                schemas[item_id] = tables
-                print(f"    {len(tables)} object(s)")
+                print(f"  🏭 Warehouse: {item_name} — skipped (Spark SQL cannot query INFORMATION_SCHEMA)")
 
-    print(f"\n  Schemas extracted for {len(schemas)} item(s)")
+    print(f"\n  Schemas extracted for {len(schemas)} item(s), {len(extracted_names)} unique name(s)")
     return schemas
 
 
@@ -225,57 +295,6 @@ def _extract_lakehouse_schema(lakehouse_name):
     except Exception as e:
         print(f"    ⚠ Error: {e}")
     return tables
-
-
-def _extract_warehouse_schema(warehouse_name):
-    """Use INFORMATION_SCHEMA to list tables, views, and columns."""
-    objects = []
-    try:
-        # Tables and views
-        tv_rows = spark.sql(
-            f"SELECT TABLE_NAME, TABLE_TYPE FROM {warehouse_name}.INFORMATION_SCHEMA.TABLES"
-        ).collect()
-        for tv in tv_rows:
-            obj = {
-                "object_name": tv["TABLE_NAME"],
-                "object_type": tv["TABLE_TYPE"],
-                "columns": [],
-            }
-            try:
-                col_rows = spark.sql(
-                    f"SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, ORDINAL_POSITION "
-                    f"FROM {warehouse_name}.INFORMATION_SCHEMA.COLUMNS "
-                    f"WHERE TABLE_NAME = '{tv['TABLE_NAME']}' "
-                    f"ORDER BY ORDINAL_POSITION"
-                ).collect()
-                obj["columns"] = [
-                    {
-                        "name": c["COLUMN_NAME"],
-                        "type": c["DATA_TYPE"],
-                        "nullable": c["IS_NULLABLE"],
-                        "ordinal": c["ORDINAL_POSITION"],
-                    }
-                    for c in col_rows
-                ]
-            except Exception as e:
-                obj["column_error"] = str(e)
-
-            # View definitions
-            if tv["TABLE_TYPE"] == "VIEW":
-                try:
-                    vd = spark.sql(
-                        f"SELECT VIEW_DEFINITION FROM {warehouse_name}.INFORMATION_SCHEMA.VIEWS "
-                        f"WHERE TABLE_NAME = '{tv['TABLE_NAME']}'"
-                    ).first()
-                    if vd:
-                        obj["view_definition"] = vd["VIEW_DEFINITION"]
-                except Exception:
-                    pass
-
-            objects.append(obj)
-    except Exception as e:
-        print(f"    ⚠ Error: {e}")
-    return objects
 
 
 print("✓ Schema extraction functions loaded")
