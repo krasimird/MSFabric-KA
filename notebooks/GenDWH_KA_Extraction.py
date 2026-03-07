@@ -327,7 +327,7 @@ def _extract_lakehouse_schema(lakehouse_name):
 
     for row in rows:
         tbl_name = row["tableName"]
-        tbl_info = {"table_name": tbl_name, "table_type": row.get("isTemporary", False), "columns": []}
+        tbl_info = {"table_name": tbl_name, "table_type": getattr(row, "isTemporary", False), "columns": []}
         try:
             cols = spark.catalog.listColumns(f"{lakehouse_name}.{tbl_name}")
             tbl_info["columns"] = [
