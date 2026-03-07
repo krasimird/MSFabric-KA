@@ -10,6 +10,9 @@
   },
   "devDependencies": {
     "@azure/static-web-apps-cli": "^2.0.0"
+  },
+  "dependencies": {
+    "@azure/identity": "^4.13.0",
+    "@azure/keyvault-secrets": "^4.10.0"
   }
 }
-
