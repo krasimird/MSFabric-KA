@@ -316,36 +316,26 @@ def extract_schemas(workspaces, token):
 
 
 def _extract_lakehouse_schema(lakehouse_name):
-    """Extract schema via Spark catalog + DESCRIBE DETAIL (metadata only, no data scan)."""
+    """Extract schema via SHOW TABLES + listColumns (fastest metadata-only approach)."""
     tables = []
 
     try:
-        catalog_tables = spark.catalog.listTables(lakehouse_name)
+        rows = spark.sql(f"SHOW TABLES IN {lakehouse_name}").collect()
     except Exception as e:
         print(f"    ⚠ Error listing tables: {e}")
         return []
 
-    for tbl in catalog_tables:
-        tbl_info = {"table_name": tbl.name, "columns": [], "is_temporary": tbl.isTemporary}
+    for row in rows:
+        tbl_name = row["tableName"]
+        tbl_info = {"table_name": tbl_name, "table_type": row.get("isTemporary", False), "columns": []}
         try:
-            schema = spark.table(f"{lakehouse_name}.{tbl.name}").schema
+            cols = spark.catalog.listColumns(f"{lakehouse_name}.{tbl_name}")
             tbl_info["columns"] = [
-                {"name": f.name, "type": str(f.dataType)}
-                for f in schema.fields
+                {"name": c.name, "dataType": c.dataType, "nullable": c.nullable}
+                for c in cols
             ]
         except Exception as e:
             tbl_info["column_error"] = str(e)
-
-        try:
-            detail = spark.sql(f"DESCRIBE DETAIL {lakehouse_name}.{tbl.name}").collect()[0]
-            tbl_info["size_bytes"] = detail["sizeInBytes"] if detail["sizeInBytes"] is not None else -1
-            tbl_info["num_files"] = detail["numFiles"] if detail["numFiles"] is not None else -1
-            tbl_info["description"] = detail["description"] or ""
-            tbl_info["last_modified"] = str(detail["lastModified"]) if detail["lastModified"] else ""
-            tbl_info["location"] = detail["location"] or ""
-        except Exception:
-            pass
-
         tables.append(tbl_info)
 
     return tables
