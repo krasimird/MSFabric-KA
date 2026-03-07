@@ -18,9 +18,11 @@ CONFIG = {
     "admin_lakehouse_name": "GenDWH_Administration_LH",
     "max_retries":          3,
     "retry_delay":          1,
+    "retry_max_delay":      5,
     "api_timeout":          60,
-    "lro_poll_interval":    2,
-    "lro_max_polls":        30,
+    "lro_poll_interval":    1,
+    "lro_max_poll_interval": 3,
+    "lro_timeout_seconds":  15,
 
     # ── Environment filter ────────────────────────────────────────────────────
     "target_environment":   "Dev",
@@ -67,18 +69,16 @@ def fabric_api_post(endpoint, body=None, token=None):
     for attempt in range(CONFIG["max_retries"]):
         resp = requests.post(url, headers=headers, json=body or {}, timeout=CONFIG["api_timeout"])
         if resp.status_code == 429:
-            wait = CONFIG["retry_delay"] * (attempt + 1)
+            wait = min(CONFIG["retry_delay"] * (attempt + 1), CONFIG["retry_max_delay"])
             print(f"  ⏳ Rate limited, waiting {wait}s...")
             time.sleep(wait)
             continue
 
-        # Long-running operation — poll until complete
+        # Long-running operation — poll until complete (strict timeout)
         if resp.status_code == 202:
             location = resp.headers.get("Location")
-            retry_after = int(resp.headers.get("Retry-After", CONFIG["lro_poll_interval"]))
             if location:
-                return _poll_lro(location, token, retry_after)
-            # 202 with no Location — return whatever body we got
+                return _poll_lro(location, token)
             return resp.json() if resp.content else {}
 
         resp.raise_for_status()
@@ -86,23 +86,25 @@ def fabric_api_post(endpoint, body=None, token=None):
     return {}
 
 
-def _poll_lro(url, token, initial_wait):
-    """Poll a long-running operation URL until it completes."""
+def _poll_lro(url, token):
+    """Poll a long-running operation URL with a strict time budget."""
     headers = {"Authorization": f"Bearer {token}"}
-    wait = max(initial_wait, 1)
+    deadline = time.time() + CONFIG["lro_timeout_seconds"]
+    wait = CONFIG["lro_poll_interval"]
+    max_wait = CONFIG["lro_max_poll_interval"]
 
-    for _ in range(CONFIG["lro_max_polls"]):
+    while time.time() < deadline:
         time.sleep(wait)
         resp = requests.get(url, headers=headers, timeout=CONFIG["api_timeout"])
 
         if resp.status_code == 200:
             return resp.json() if resp.content else {}
         if resp.status_code == 202:
-            wait = int(resp.headers.get("Retry-After", wait))
+            wait = min(int(resp.headers.get("Retry-After", wait)), max_wait)
             continue
         resp.raise_for_status()
 
-    raise TimeoutError(f"LRO did not complete after {CONFIG['lro_max_polls']} polls: {url}")
+    raise TimeoutError(f"LRO timed out after {CONFIG['lro_timeout_seconds']}s")
 
 
 def sha256_short(text):
@@ -176,62 +178,104 @@ print("✓ Discovery function loaded")
 # CELL 3 ── Definition Extraction ───
 
 def extract_definitions(workspaces, token):
-    """Call getDefinition for EVERY item. Items that don't support it get an error entry."""
+    """Call getDefinition for EVERY item, skipping types that return 400 on first attempt."""
     print("\n" + "═" * 60)
     print("STEP 2 — DEFINITION EXTRACTION")
     print("═" * 60)
 
-    results = {}  # item_id -> definition parts or error dict
-    ok = 0
-    skipped = 0
+    results = {}          # item_id -> definition parts or error dict
+    unsupported = set()   # item types that returned 400 (not supported)
+    # Per-type counters: {type: {"ok": N, "fail": N, "skip": N}}
+    stats = {}
 
+    def bump(item_type, key):
+        stats.setdefault(item_type, {"ok": 0, "fail": 0, "skip": 0})
+        stats[item_type][key] += 1
+
+    # Build ordered work list so we can count remaining items per type
+    work = []
+    type_counts = {}
     for ws in workspaces:
-        ws_id = ws["id"]
         for item in ws["items"]:
-            item_id = item["id"]
-            item_type = item["type"]
-            label = f"{item['displayName']} ({item_type})"
-            try:
-                resp = fabric_api_post(
-                    f"/workspaces/{ws_id}/items/{item_id}/getDefinition",
-                    token=token,
+            work.append((ws["id"], item))
+            type_counts[item["type"]] = type_counts.get(item["type"], 0) + 1
+
+    for ws_id, item in work:
+        item_id = item["id"]
+        item_type = item["type"]
+        label = f"{item['displayName']} ({item_type})"
+
+        # Skip types we already know don't support getDefinition
+        if item_type in unsupported:
+            bump(item_type, "skip")
+            results[item_id] = {"error": "type unsupported", "item_type": item_type}
+            continue
+
+        try:
+            resp = fabric_api_post(
+                f"/workspaces/{ws_id}/items/{item_id}/getDefinition",
+                token=token,
+            )
+            if not resp or not isinstance(resp, dict):
+                bump(item_type, "fail")
+                results[item_id] = {"error": "empty response", "item_type": item_type}
+                continue
+
+            definition = resp.get("definition")
+            parts = (definition or {}).get("parts", []) if definition else []
+            decoded_parts = []
+            for part in parts:
+                payload = part.get("payload", "")
+                try:
+                    decoded = base64.b64decode(payload).decode("utf-8")
+                except Exception:
+                    decoded = payload
+                decoded_parts.append({
+                    "path": part.get("path", ""),
+                    "payloadType": part.get("payloadType", ""),
+                    "payload": decoded,
+                })
+
+            if decoded_parts:
+                results[item_id] = decoded_parts
+                bump(item_type, "ok")
+                print(f"  ✓ {label}: {len(decoded_parts)} part(s)")
+            else:
+                results[item_id] = {"raw_response": resp, "item_type": item_type}
+                bump(item_type, "ok")
+                print(f"  ✓ {label}: no parts, stored raw response")
+
+        except requests.exceptions.HTTPError as e:
+            if e.response is not None and e.response.status_code == 400:
+                unsupported.add(item_type)
+                remaining = sum(1 for _, i in work if i["type"] == item_type) - (
+                    stats.get(item_type, {}).get("ok", 0)
+                    + stats.get(item_type, {}).get("fail", 0)
+                    + 1  # this one
                 )
-                if not resp or not isinstance(resp, dict):
-                    skipped += 1
-                    print(f"  ⚠ {label}: empty response")
-                    results[item_id] = {"error": "empty response", "item_type": item_type}
-                    continue
-
-                definition = resp.get("definition")
-                parts = (definition or {}).get("parts", []) if definition else []
-                decoded_parts = []
-                for part in parts:
-                    payload = part.get("payload", "")
-                    try:
-                        decoded = base64.b64decode(payload).decode("utf-8")
-                    except Exception:
-                        decoded = payload  # keep raw if decode fails
-                    decoded_parts.append({
-                        "path": part.get("path", ""),
-                        "payloadType": part.get("payloadType", ""),
-                        "payload": decoded,
-                    })
-
-                if decoded_parts:
-                    results[item_id] = decoded_parts
-                    ok += 1
-                    print(f"  ✓ {label}: {len(decoded_parts)} part(s)")
-                else:
-                    # Store raw response for items with non-standard format
-                    results[item_id] = {"raw_response": resp, "item_type": item_type}
-                    ok += 1
-                    print(f"  ✓ {label}: no parts, stored raw response")
-            except Exception as e:
-                skipped += 1
+                bump(item_type, "fail")
+                print(f"  ⚠ {label}: 400 — marking {item_type} unsupported, skipping {remaining} remaining")
+            else:
+                bump(item_type, "fail")
                 print(f"  ⚠ {label}: {e}")
-                results[item_id] = {"error": str(e), "item_type": item_type}
+            results[item_id] = {"error": str(e), "item_type": item_type}
 
-    print(f"\n  Definitions: {ok} extracted, {skipped} unsupported/failed")
+        except Exception as e:
+            bump(item_type, "fail")
+            print(f"  ⚠ {label}: {e}")
+            results[item_id] = {"error": str(e), "item_type": item_type}
+
+    # Summary table
+    total_ok = sum(s["ok"] for s in stats.values())
+    total_fail = sum(s["fail"] for s in stats.values())
+    total_skip = sum(s["skip"] for s in stats.values())
+    print(f"\n  {'Type':<25} {'OK':>5} {'Fail':>5} {'Skip':>5}")
+    print(f"  {'-'*25} {'-'*5} {'-'*5} {'-'*5}")
+    for t in sorted(stats):
+        s = stats[t]
+        print(f"  {t:<25} {s['ok']:>5} {s['fail']:>5} {s['skip']:>5}")
+    print(f"  {'-'*25} {'-'*5} {'-'*5} {'-'*5}")
+    print(f"  {'TOTAL':<25} {total_ok:>5} {total_fail:>5} {total_skip:>5}")
     return results
 
 
