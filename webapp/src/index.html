@@ -4,19 +4,374 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>GenDWH Knowledge Assistant</title>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <style>
-    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; display: flex; align-items: center; justify-content: center; min-height: 100vh; background: #f3f2f1; color: #323130; }
-    .card { background: #fff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,.1); padding: 2rem 3rem; text-align: center; max-width: 480px; }
-    h1 { color: #0078d4; margin-bottom: .5rem; }
-    p { color: #605e5c; }
+    /* ── Reset & Base ─────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --teal: #1C8D7A; --teal-light: #e6f5f2; --teal-dark: #156d5e;
+      --bg: #f3f2f1; --surface: #ffffff; --text: #323130; --text-muted: #605e5c;
+      --border: #edebe9; --user-bg: #e6f5f2; --assistant-bg: #ffffff;
+      --sidebar-w: 280px; --header-h: 56px; --input-h: 72px;
+    }
+    html, body { height: 100%; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: var(--bg); color: var(--text); }
+
+    /* ── Layout ───────────────────────────────────────────────── */
+    .app { display: flex; height: 100vh; overflow: hidden; }
+
+    /* ── Sidebar ──────────────────────────────────────────────── */
+    .sidebar {
+      width: var(--sidebar-w); background: var(--surface); border-right: 1px solid var(--border);
+      display: flex; flex-direction: column; flex-shrink: 0; overflow-y: auto;
+    }
+    .sidebar-header { padding: 16px; border-bottom: 1px solid var(--border); }
+    .sidebar-header h2 { font-size: 14px; color: var(--teal); text-transform: uppercase; letter-spacing: .5px; }
+    .stats-grid { padding: 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .stat-card { background: var(--teal-light); border-radius: 8px; padding: 12px; text-align: center; }
+    .stat-card .value { font-size: 22px; font-weight: 700; color: var(--teal); }
+    .stat-card .label { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+    .sidebar-section { padding: 12px 16px; border-top: 1px solid var(--border); }
+    .sidebar-section h3 { font-size: 12px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 8px; }
+    .quick-btn {
+      display: block; width: 100%; text-align: left; padding: 8px 10px; margin-bottom: 4px;
+      border: 1px solid var(--border); border-radius: 6px; background: var(--surface);
+      cursor: pointer; font-size: 13px; color: var(--text); transition: background .15s;
+    }
+    .quick-btn:hover { background: var(--teal-light); border-color: var(--teal); }
+    .data-status { padding: 12px 16px; font-size: 12px; color: var(--text-muted); border-top: 1px solid var(--border); margin-top: auto; }
+    .data-status .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+    .dot-ok { background: var(--teal); } .dot-err { background: #d13438; } .dot-loading { background: #f7a93b; }
+
+    /* ── Main Panel ───────────────────────────────────────────── */
+    .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+    /* ── Header ───────────────────────────────────────────────── */
+    .header {
+      height: var(--header-h); background: var(--teal); color: #fff;
+      display: flex; align-items: center; padding: 0 20px; flex-shrink: 0;
+    }
+    .header .logo { font-weight: 700; font-size: 18px; }
+    .header .logo span { font-weight: 400; opacity: .8; font-size: 13px; margin-left: 10px; }
+    .menu-toggle {
+      display: none; background: none; border: none; color: #fff; font-size: 22px;
+      cursor: pointer; margin-right: 12px; padding: 4px;
+    }
+
+    /* ── Chat Area ────────────────────────────────────────────── */
+    .chat-area { flex: 1; overflow-y: auto; padding: 20px 24px; display: flex; flex-direction: column; gap: 16px; }
+    .message { max-width: 80%; display: flex; flex-direction: column; }
+    .message.user { align-self: flex-end; }
+    .message.assistant { align-self: flex-start; }
+    .msg-bubble {
+      padding: 12px 16px; border-radius: 12px; font-size: 14px; line-height: 1.6;
+      word-wrap: break-word; overflow-wrap: break-word;
+    }
+    .user .msg-bubble { background: var(--user-bg); border: 1px solid #c4e3dd; border-bottom-right-radius: 4px; }
+    .assistant .msg-bubble { background: var(--assistant-bg); border: 1px solid var(--border); border-bottom-left-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+    .msg-bubble p { margin-bottom: 8px; } .msg-bubble p:last-child { margin-bottom: 0; }
+    .msg-bubble pre { background: #f6f6f6; padding: 10px 12px; border-radius: 6px; overflow-x: auto; font-size: 13px; margin: 8px 0; }
+    .msg-bubble code { font-family: 'Cascadia Code', Consolas, monospace; font-size: 13px; }
+    .msg-bubble code:not(pre code) { background: #f0f0f0; padding: 1px 5px; border-radius: 3px; }
+    .msg-bubble table { border-collapse: collapse; margin: 8px 0; font-size: 13px; }
+    .msg-bubble th, .msg-bubble td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; }
+    .msg-bubble th { background: var(--teal-light); font-weight: 600; }
+    .msg-label { font-size: 11px; color: var(--text-muted); margin-bottom: 4px; padding: 0 4px; }
+    .user .msg-label { text-align: right; }
+    .welcome { text-align: center; color: var(--text-muted); margin: auto; max-width: 500px; }
+    .welcome h2 { color: var(--teal); margin-bottom: 8px; }
+
+    /* ── Spinner ──────────────────────────────────────────────── */
+    .spinner-wrap { align-self: flex-start; display: flex; align-items: center; gap: 8px; color: var(--text-muted); font-size: 13px; }
+    .spinner { width: 20px; height: 20px; border: 3px solid var(--border); border-top-color: var(--teal); border-radius: 50%; animation: spin .8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Input Area ───────────────────────────────────────────── */
+    .input-area {
+      padding: 12px 20px; border-top: 1px solid var(--border); background: var(--surface);
+      display: flex; gap: 10px; align-items: flex-end; flex-shrink: 0;
+    }
+    .input-area textarea {
+      flex: 1; resize: none; border: 1px solid var(--border); border-radius: 8px;
+      padding: 10px 14px; font-family: inherit; font-size: 14px; line-height: 1.5;
+      min-height: 44px; max-height: 120px; outline: none; transition: border-color .15s;
+    }
+    .input-area textarea:focus { border-color: var(--teal); }
+    .send-btn {
+      background: var(--teal); color: #fff; border: none; border-radius: 8px;
+      padding: 10px 20px; font-size: 14px; font-weight: 600; cursor: pointer;
+      transition: background .15s; height: 44px;
+    }
+    .send-btn:hover { background: var(--teal-dark); }
+    .send-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+    /* ── Mobile ───────────────────────────────────────────────── */
+    @media (max-width: 768px) {
+      .sidebar { position: fixed; left: -300px; top: 0; bottom: 0; z-index: 100; transition: left .25s; box-shadow: 2px 0 12px rgba(0,0,0,.15); }
+      .sidebar.open { left: 0; }
+      .menu-toggle { display: block; }
+      .message { max-width: 95%; }
+    }
   </style>
 </head>
 <body>
-  <div class="card">
-    <h1>GenDWH Knowledge Assistant</h1>
-    <p>RAG-powered Q&amp;A for your Microsoft Fabric Data Warehouse.</p>
-    <p><em>Coming soon.</em></p>
+<div class="app">
+  <!-- Sidebar -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header"><h2>📊 Platform Stats</h2></div>
+    <div class="stats-grid" id="statsGrid">
+      <div class="stat-card"><div class="value" id="statWorkspaces">–</div><div class="label">Workspaces</div></div>
+      <div class="stat-card"><div class="value" id="statItems">–</div><div class="label">Items</div></div>
+      <div class="stat-card"><div class="value" id="statTables">–</div><div class="label">Tables</div></div>
+      <div class="stat-card"><div class="value" id="statColumns">–</div><div class="label">Columns</div></div>
+      <div class="stat-card"><div class="value" id="statPipelines">–</div><div class="label">Pipelines</div></div>
+      <div class="stat-card"><div class="value" id="statDefinitions">–</div><div class="label">Definitions</div></div>
+    </div>
+    <div class="sidebar-section">
+      <h3>Quick Questions</h3>
+      <button class="quick-btn" data-q="What tables are in the platform and how are they organized?">📋 Platform overview</button>
+      <button class="quick-btn" data-q="Show me all pipelines and their activities">🔄 Pipeline summary</button>
+      <button class="quick-btn" data-q="What stored procedures exist in the warehouses?">🏭 Warehouse procedures</button>
+      <button class="quick-btn" data-q="What DAX measures are defined in the semantic models?">📐 DAX measures</button>
+      <button class="quick-btn" data-q="List all notebooks and what they do">📓 Notebooks</button>
+    </div>
+    <div class="data-status" id="dataStatus"><span class="dot dot-loading"></span> Loading data…</div>
+  </aside>
+
+  <!-- Main -->
+  <div class="main">
+    <header class="header">
+      <button class="menu-toggle" id="menuToggle">☰</button>
+      <div class="logo">GenDWH Knowledge Assistant <span>powered by Claude</span></div>
+    </header>
+
+    <div class="chat-area" id="chatArea">
+      <div class="welcome">
+        <h2>👋 Welcome</h2>
+        <p>Ask anything about the GenDWH Data Warehouse platform — tables, pipelines, lineage, schemas, notebooks, and more.</p>
+        <p style="margin-top:12px;font-size:13px;">Data is loaded from the latest extraction export. Try a quick question from the sidebar or type your own below.</p>
+      </div>
+    </div>
+
+    <div class="input-area">
+      <textarea id="userInput" placeholder="Ask about your data warehouse… (Enter to send, Shift+Enter for new line)" rows="1"></textarea>
+      <button class="send-btn" id="sendBtn">Send</button>
+    </div>
   </div>
+</div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════
+   GenDWH Knowledge Assistant — Client-side RAG + Chat
+   ═══════════════════════════════════════════════════════════════ */
+
+// ── State ──────────────────────────────────────────────────────
+let KB = null;           // Raw JSON export
+let chatHistory = [];    // {role, content} pairs for Claude API
+const MAX_HISTORY = 10;  // Last N messages sent as context
+
+// ── DOM refs ───────────────────────────────────────────────────
+const chatArea  = document.getElementById('chatArea');
+const userInput = document.getElementById('userInput');
+const sendBtn   = document.getElementById('sendBtn');
+const sidebar   = document.getElementById('sidebar');
+const menuToggle= document.getElementById('menuToggle');
+
+// ── Data loading ───────────────────────────────────────────────
+async function loadData() {
+  const statusEl = document.getElementById('dataStatus');
+  const paths = ['/data/gendwh_raw_export.json', 'https://sainspiritka.blob.core.windows.net/gendwh-exports/latest/gendwh_raw_export.json'];
+  for (const url of paths) {
+    try {
+      const resp = await fetch(url);
+      if (!resp.ok) continue;
+      KB = await resp.json();
+      populateStats();
+      statusEl.innerHTML = '<span class="dot dot-ok"></span> Data loaded ✓';
+      return;
+    } catch (_) { /* try next */ }
+  }
+  statusEl.innerHTML = '<span class="dot dot-err"></span> No data — place gendwh_raw_export.json in src/data/';
+}
+
+function populateStats() {
+  if (!KB) return;
+  const s = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  s('statWorkspaces', KB.workspaces ? KB.workspaces.length : 0);
+  const items = KB.workspaces ? KB.workspaces.reduce((n, ws) => n + (ws.items ? ws.items.length : 0), 0) : 0;
+  s('statItems', items);
+  // Count tables from schemas
+  let tables = 0, cols = 0;
+  if (KB.schemas) { for (const sch of KB.schemas) { tables += sch.tables ? sch.tables.length : 0; cols += sch.columns ? sch.columns.length : 0; } }
+  s('statTables', tables);
+  s('statColumns', cols);
+  // Pipelines
+  let pipelines = 0, definitions = 0;
+  if (KB.workspaces) for (const ws of KB.workspaces) for (const it of (ws.items||[])) {
+    if (it.type === 'DataPipeline') pipelines++;
+    if (it.definition) definitions++;
+  }
+  s('statPipelines', pipelines);
+  s('statDefinitions', definitions);
+}
+
+// ── RAG retrieval (keyword) ────────────────────────────────────
+function retrieveContext(query) {
+  if (!KB) return '(No data loaded)';
+  const tokens = query.toLowerCase().replace(/[^a-z0-9а-яё_]/gi, ' ').split(/\s+/).filter(t => t.length > 2);
+  const chunks = [];
+
+  // Search in workspace/item names and definitions
+  if (KB.workspaces) for (const ws of KB.workspaces) {
+    for (const item of (ws.items || [])) {
+      const blob = JSON.stringify(item).toLowerCase();
+      let score = 0;
+      for (const t of tokens) if (blob.includes(t)) score++;
+      if (score > 0) chunks.push({ score, text: `[${ws.name}] ${item.type}: ${item.name}\n${item.definition ? JSON.stringify(item.definition).slice(0, 2000) : '(no definition)'}` });
+    }
+  }
+
+  // Search in schemas
+  if (KB.schemas) for (const sch of KB.schemas) {
+    const blob = JSON.stringify(sch).toLowerCase();
+    let score = 0;
+    for (const t of tokens) if (blob.includes(t)) score++;
+    if (score > 0) chunks.push({ score, text: `Schema: ${sch.name} (${sch.item_type})\nTables: ${(sch.tables||[]).map(t=>t.name||t).join(', ')}\nColumns: ${(sch.columns||[]).slice(0,50).map(c=>`${c.table}.${c.column} (${c.data_type})`).join(', ')}` });
+  }
+
+  // Search in metadata queries
+  if (KB.metadata_queries) for (const mq of KB.metadata_queries) {
+    const blob = JSON.stringify(mq).toLowerCase();
+    let score = 0;
+    for (const t of tokens) if (blob.includes(t)) score++;
+    if (score > 0) chunks.push({ score, text: `Metadata Query: ${mq.table_name || mq.target_table || 'unknown'}\nSQL: ${(mq.source_query || mq.sql || '').slice(0, 1500)}` });
+  }
+
+  // Search in bronze mappings
+  if (KB.bronze_mappings) for (const bm of KB.bronze_mappings) {
+    const blob = JSON.stringify(bm).toLowerCase();
+    let score = 0;
+    for (const t of tokens) if (blob.includes(t)) score++;
+    if (score > 0) chunks.push({ score, text: `Bronze Mapping: ${bm.target_table || bm.table_name || 'unknown'} ← ${bm.source_table || bm.source || 'unknown'}` });
+  }
+
+  chunks.sort((a, b) => b.score - a.score);
+  let ctx = '', budget = 12000;
+  for (const c of chunks) {
+    if (ctx.length + c.text.length > budget) break;
+    ctx += c.text + '\n---\n';
+  }
+  return ctx || '(No matching context found for this query)';
+}
+
+// ── System prompt ──────────────────────────────────────────────
+const SYSTEM_PROMPT = `You are GenDWH Knowledge Assistant — an AI expert on the GenDWH Data Warehouse platform built on Microsoft Fabric.
+
+Your knowledge comes from the CONTEXT section below, which contains real metadata extracted from the platform: table schemas, pipeline definitions, notebook source code, SQL queries, DAX measures, warehouse stored procedures, and more.
+
+Rules:
+- Answer in the SAME LANGUAGE as the question (Bulgarian or English)
+- Cite specific table names, column names, SQL expressions, DAX measures from the context
+- If the information is NOT in the context, say so explicitly — do not guess
+- Use Markdown formatting: headers, bullet lists, code blocks, tables
+- For lineage questions, trace data flow: source → transformations → target
+- Be concise but thorough`;
+
+// ── Chat logic ─────────────────────────────────────────────────
+async function sendMessage(text) {
+  if (!text.trim()) return;
+
+  // Remove welcome
+  const welcome = chatArea.querySelector('.welcome');
+  if (welcome) welcome.remove();
+
+  // Add user bubble
+  appendMessage('user', text);
+  chatHistory.push({ role: 'user', content: text });
+
+  // Trim history
+  if (chatHistory.length > MAX_HISTORY) chatHistory = chatHistory.slice(-MAX_HISTORY);
+
+  // Show spinner
+  const spinner = document.createElement('div');
+  spinner.className = 'spinner-wrap';
+  spinner.innerHTML = '<div class="spinner"></div> Thinking…';
+  chatArea.appendChild(spinner);
+  chatArea.scrollTop = chatArea.scrollHeight;
+
+  // RAG context
+  const context = retrieveContext(text);
+  const systemWithContext = SYSTEM_PROMPT + '\n\nCONTEXT:\n' + context;
+
+  try {
+    sendBtn.disabled = true;
+    const resp = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: chatHistory, system: systemWithContext })
+    });
+
+    const data = await resp.json();
+    spinner.remove();
+
+    if (data.error) {
+      appendMessage('assistant', '⚠️ Error: ' + (data.error.message || data.error));
+    } else {
+      const reply = data.content ? data.content.map(c => c.text).join('') : 'No response';
+      appendMessage('assistant', reply);
+      chatHistory.push({ role: 'assistant', content: reply });
+    }
+  } catch (err) {
+    spinner.remove();
+    appendMessage('assistant', '⚠️ Failed to reach the API. Is the backend running?');
+  } finally {
+    sendBtn.disabled = false;
+    userInput.focus();
+  }
+}
+
+function appendMessage(role, content) {
+  const div = document.createElement('div');
+  div.className = `message ${role}`;
+  const label = document.createElement('div');
+  label.className = 'msg-label';
+  label.textContent = role === 'user' ? 'You' : 'Assistant';
+  const bubble = document.createElement('div');
+  bubble.className = 'msg-bubble';
+  if (role === 'assistant') {
+    bubble.innerHTML = marked.parse(content);
+  } else {
+    bubble.textContent = content;
+  }
+  div.appendChild(label);
+  div.appendChild(bubble);
+  chatArea.appendChild(div);
+  chatArea.scrollTop = chatArea.scrollHeight;
+}
+
+// ── Event listeners ────────────────────────────────────────────
+sendBtn.addEventListener('click', () => { sendMessage(userInput.value); userInput.value = ''; userInput.style.height = 'auto'; });
+
+userInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendBtn.click(); }
+});
+
+// Auto-resize textarea
+userInput.addEventListener('input', () => {
+  userInput.style.height = 'auto';
+  userInput.style.height = Math.min(userInput.scrollHeight, 120) + 'px';
+});
+
+// Quick question buttons
+document.querySelectorAll('.quick-btn').forEach(btn => {
+  btn.addEventListener('click', () => { userInput.value = btn.dataset.q; sendBtn.click(); });
+});
+
+// Mobile sidebar toggle
+menuToggle.addEventListener('click', () => sidebar.classList.toggle('open'));
+chatArea.addEventListener('click', () => sidebar.classList.remove('open'));
+
+// ── Init ───────────────────────────────────────────────────────
+loadData();
+</script>
 </body>
 </html>
-

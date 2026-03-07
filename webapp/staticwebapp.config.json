@@ -17,7 +17,7 @@
     },
     {
       "route": "/*",
-      "allowedRoles": ["authenticated"]
+      "allowedRoles": ["authenticated", "anonymous"]
     }
   ],
   "responseOverrides": {
