@@ -22,7 +22,7 @@ CONFIG = {
     "api_timeout":          60,
     "lro_poll_interval":    1,
     "lro_max_poll_interval": 3,
-    "lro_timeout_seconds":  15,
+    "lro_timeout_seconds":  30,
 
     # ── Environment filter ────────────────────────────────────────────────────
     "target_environment":   "Dev",
@@ -87,7 +87,13 @@ def fabric_api_post(endpoint, body=None, token=None):
 
 
 def _poll_lro(url, token):
-    """Poll a long-running operation URL with a strict time budget."""
+    """Poll a long-running operation URL with a strict time budget.
+
+    Three-step LRO flow (per Microsoft docs):
+      1. POST → 202 + Location header (operation URL)
+      2. Poll GET /operations/{operationId} → wait for "Succeeded"
+      3. GET /operations/{operationId}/result → actual definition content
+    """
     headers = {"Authorization": f"Bearer {token}"}
     deadline = time.time() + CONFIG["lro_timeout_seconds"]
     wait = CONFIG["lro_poll_interval"]
@@ -98,7 +104,31 @@ def _poll_lro(url, token):
         resp = requests.get(url, headers=headers, timeout=CONFIG["api_timeout"])
 
         if resp.status_code == 200:
-            return resp.json() if resp.content else {}
+            body = resp.json() if resp.content else {}
+            status = body.get("status", "")
+
+            # Step 3: if Succeeded, fetch the actual result from /result endpoint
+            if status == "Succeeded":
+                # Extract operationId from URL: .../operations/{operationId}
+                op_id = url.rstrip("/").split("/")[-1]
+                result_url = f"{CONFIG['fabric_api_base']}/operations/{op_id}/result"
+                try:
+                    result_resp = requests.get(result_url, headers=headers, timeout=CONFIG["api_timeout"])
+                    if result_resp.status_code == 200 and result_resp.content:
+                        return result_resp.json()
+                except Exception:
+                    pass
+                # Fallback: return the poll body if /result fails
+                return body
+
+            # Terminal failure
+            if status in ("Failed", "Cancelled"):
+                return body
+
+            # Still running — continue polling
+            wait = min(int(resp.headers.get("Retry-After", wait)), max_wait)
+            continue
+
         if resp.status_code == 202:
             wait = min(int(resp.headers.get("Retry-After", wait)), max_wait)
             continue
