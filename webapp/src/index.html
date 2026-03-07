@@ -200,9 +200,9 @@ function populateStats() {
   s('statWorkspaces', KB.workspaces ? KB.workspaces.length : 0);
   const items = KB.workspaces ? KB.workspaces.reduce((n, ws) => n + (ws.items ? ws.items.length : 0), 0) : 0;
   s('statItems', items);
-  // Count tables from schemas
+  // Count tables from schemas (schemas is an object keyed by item_id, each value is an array of tables)
   let tables = 0, cols = 0;
-  if (KB.schemas) { for (const sch of KB.schemas) { tables += sch.tables ? sch.tables.length : 0; cols += sch.columns ? sch.columns.length : 0; } }
+  if (KB.schemas) { for (const tblArr of Object.values(KB.schemas)) { for (const tbl of tblArr) { tables++; cols += tbl.columns ? tbl.columns.length : 0; } } }
   s('statTables', tables);
   s('statColumns', cols);
   // Pipelines
@@ -231,28 +231,28 @@ function retrieveContext(query) {
     }
   }
 
-  // Search in schemas
-  if (KB.schemas) for (const sch of KB.schemas) {
-    const blob = JSON.stringify(sch).toLowerCase();
+  // Search in schemas (object keyed by item_id → array of {table_name, table_type, columns})
+  if (KB.schemas) for (const [itemId, tblArr] of Object.entries(KB.schemas)) {
+    const blob = JSON.stringify(tblArr).toLowerCase();
     let score = 0;
     for (const t of tokens) if (blob.includes(t)) score++;
-    if (score > 0) chunks.push({ score, text: `Schema: ${sch.name} (${sch.item_type})\nTables: ${(sch.tables||[]).map(t=>t.name||t).join(', ')}\nColumns: ${(sch.columns||[]).slice(0,50).map(c=>`${c.table}.${c.column} (${c.data_type})`).join(', ')}` });
+    if (score > 0) chunks.push({ score, text: `Schema [${itemId.slice(0,8)}…]: ${tblArr.length} tables\nTables: ${tblArr.map(t=>t.table_name||t.name||t).join(', ')}\nColumns: ${tblArr.flatMap(t=>(t.columns||[])).slice(0,50).map(c=>`${c.column_name||c.name} (${c.data_type||''})`).join(', ')}` });
   }
 
-  // Search in metadata queries
-  if (KB.metadata_queries) for (const mq of KB.metadata_queries) {
+  // Search in metadata queries (KB.metadata.queries)
+  if (KB.metadata && KB.metadata.queries) for (const mq of KB.metadata.queries) {
     const blob = JSON.stringify(mq).toLowerCase();
     let score = 0;
     for (const t of tokens) if (blob.includes(t)) score++;
-    if (score > 0) chunks.push({ score, text: `Metadata Query: ${mq.table_name || mq.target_table || 'unknown'}\nSQL: ${(mq.source_query || mq.sql || '').slice(0, 1500)}` });
+    if (score > 0) chunks.push({ score, text: `Metadata Query [${mq.layer||''}]: ${mq.target_table || mq.meta_table || 'unknown'}\nSQL: ${(mq.source_query || '').slice(0, 1500)}` });
   }
 
-  // Search in bronze mappings
-  if (KB.bronze_mappings) for (const bm of KB.bronze_mappings) {
+  // Search in bronze mappings (KB.metadata.bronze_meta)
+  if (KB.metadata && KB.metadata.bronze_meta) for (const bm of KB.metadata.bronze_meta) {
     const blob = JSON.stringify(bm).toLowerCase();
     let score = 0;
     for (const t of tokens) if (blob.includes(t)) score++;
-    if (score > 0) chunks.push({ score, text: `Bronze Mapping: ${bm.target_table || bm.table_name || 'unknown'} ← ${bm.source_table || bm.source || 'unknown'}` });
+    if (score > 0) chunks.push({ score, text: `Bronze Mapping: ${bm.target_table || 'unknown'} ← ${bm.source_schema||''}.${bm.source_table || 'unknown'}` });
   }
 
   chunks.sort((a, b) => b.score - a.score);
