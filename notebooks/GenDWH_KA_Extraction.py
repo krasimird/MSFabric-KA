@@ -314,15 +314,16 @@ print("✓ Definition extraction function loaded")
 # CELL 4 ── Schema Extraction ───
 
 def extract_schemas(workspaces, token):
-    """Extract table schemas from Lakehouses via Spark SQL. Deduplicates by name."""
+    """Extract table schemas from Lakehouses (Spark SQL) and Warehouses (JDBC)."""
     print("\n" + "═" * 60)
     print("STEP 3 — SCHEMA EXTRACTION")
     print("═" * 60)
 
-    schemas = {}  # item_id -> list of table dicts
+    schemas = {}  # item_id -> schema dict
     extracted_names = set()  # track already-extracted lakehouse/warehouse names
 
     for ws in workspaces:
+        ws_id = ws["id"]
         for item in ws["items"]:
             item_id = item["id"]
             item_name = item["displayName"]
@@ -339,7 +340,13 @@ def extract_schemas(workspaces, token):
                 print(f"    {len(tables)} table(s)")
 
             elif item_type == "Warehouse":
-                print(f"  🏭 Warehouse: {item_name} — skipped (Spark SQL cannot query INFORMATION_SCHEMA)")
+                if item_name in extracted_names:
+                    print(f"  ⏭ Warehouse: {item_name} (already extracted, skipping)")
+                    continue
+                extracted_names.add(item_name)
+                print(f"  🏭 Warehouse: {item_name}")
+                wh_schema = _extract_warehouse_schema(ws_id, item_id, item_name, token)
+                schemas[item_id] = wh_schema
 
     print(f"\n  Schemas extracted for {len(schemas)} item(s), {len(extracted_names)} unique name(s)")
     return schemas
@@ -369,6 +376,98 @@ def _extract_lakehouse_schema(lakehouse_name):
         tables.append(tbl_info)
 
     return tables
+
+
+def _extract_warehouse_schema(ws_id, wh_id, wh_name, token):
+    """Extract Warehouse schema via JDBC (INFORMATION_SCHEMA)."""
+    result = {"item_type": "Warehouse", "tables": [], "views": [], "procedures": []}
+    try:
+        # Step 1: Get connectionString from Warehouse REST API
+        wh_token = get_fabric_token()
+        headers = {"Authorization": f"Bearer {wh_token}"}
+        resp = requests.get(
+            f"{CONFIG['fabric_api_base']}/workspaces/{ws_id}/warehouses/{wh_id}",
+            headers=headers, timeout=CONFIG["api_timeout"],
+        )
+        resp.raise_for_status()
+        conn_string = resp.json().get("properties", {}).get("connectionString", "")
+        if not conn_string:
+            print(f"    ⚠ No connectionString found")
+            return result
+
+        # Step 2: Build JDBC URL
+        jdbc_url = f"jdbc:sqlserver://{conn_string};database={wh_name};encrypt=true;trustServerCertificate=false"
+        jdbc_token = get_fabric_token()
+
+        def _jdbc_read(query):
+            return (spark.read.format("jdbc")
+                    .option("url", jdbc_url)
+                    .option("query", query)
+                    .option("accessToken", jdbc_token)
+                    .load()
+                    .collect())
+
+        # Step 3a: Tables and columns
+        try:
+            col_rows = _jdbc_read(
+                "SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, DATA_TYPE, "
+                "ORDINAL_POSITION, IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS"
+            )
+            # Group columns by (schema, table)
+            tbl_map = {}
+            for r in col_rows:
+                key = (r["TABLE_SCHEMA"], r["TABLE_NAME"])
+                tbl_map.setdefault(key, []).append({
+                    "name": r["COLUMN_NAME"],
+                    "dataType": r["DATA_TYPE"],
+                    "ordinal": r["ORDINAL_POSITION"],
+                    "nullable": r["IS_NULLABLE"],
+                })
+            for (schema, name), cols in sorted(tbl_map.items()):
+                cols.sort(key=lambda c: c["ordinal"])
+                result["tables"].append({"schema": schema, "name": name, "columns": cols})
+            print(f"    {len(col_rows)} column(s) in {len(tbl_map)} table(s)")
+        except Exception as e:
+            print(f"    ⚠ COLUMNS query failed: {e}")
+
+        # Step 3b: Views
+        try:
+            view_rows = _jdbc_read(
+                "SELECT TABLE_SCHEMA, TABLE_NAME, VIEW_DEFINITION "
+                "FROM INFORMATION_SCHEMA.VIEWS"
+            )
+            for r in view_rows:
+                result["views"].append({
+                    "schema": r["TABLE_SCHEMA"],
+                    "name": r["TABLE_NAME"],
+                    "definition": r["VIEW_DEFINITION"],
+                })
+            print(f"    {len(view_rows)} view(s)")
+        except Exception as e:
+            print(f"    ⚠ VIEWS query failed: {e}")
+
+        # Step 3c: Stored procedures
+        try:
+            proc_rows = _jdbc_read(
+                "SELECT ROUTINE_SCHEMA, ROUTINE_NAME, ROUTINE_TYPE, ROUTINE_DEFINITION "
+                "FROM INFORMATION_SCHEMA.ROUTINES"
+            )
+            for r in proc_rows:
+                result["procedures"].append({
+                    "schema": r["ROUTINE_SCHEMA"],
+                    "name": r["ROUTINE_NAME"],
+                    "type": r["ROUTINE_TYPE"],
+                    "definition": r["ROUTINE_DEFINITION"],
+                })
+            print(f"    {len(proc_rows)} procedure(s)")
+        except Exception as e:
+            print(f"    ⚠ ROUTINES query failed: {e}")
+
+    except Exception as e:
+        print(f"    ⚠ Warehouse extraction failed: {e}")
+        result["error"] = str(e)
+
+    return result
 
 
 print("✓ Schema extraction functions loaded")
