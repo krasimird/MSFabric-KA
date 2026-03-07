@@ -31,6 +31,10 @@ CONFIG = {
         "Test": ["_WS_T", "_UWS_T"],
         "Prod": ["_WS_P", "_UWS_P"],
     },
+
+    # ── Blob Storage upload ──────────────────────────────────────────────────
+    "blob_connection_string": "",  # Set in notebook before running. SAS-based, no AccountKey.
+    "blob_container": "gendwh-exports",
 }
 
 print("✓ Configuration loaded")
@@ -581,7 +585,52 @@ def build_export(workspaces, definitions, schemas, metadata):
     print(f"  ✓ Metadata queries: {len(metadata.get('queries', []))}")
     print(f"  ✓ Bronze meta: {len(metadata.get('bronze_meta', []))}")
 
+    # ── Blob Storage upload ──────────────────────────────────────────────────
+    _upload_to_blob(output_path, export["_meta"]["extracted_at"])
+
     return export
+
+
+def _upload_to_blob(local_path, extracted_at):
+    """Upload JSON to Azure Blob Storage (latest + archive). Fails silently."""
+    conn_str = CONFIG.get("blob_connection_string", "")
+    if not conn_str:
+        print("\n  ⚠ blob_connection_string is empty — skipping Blob upload")
+        return
+
+    try:
+        from azure.storage.blob import BlobServiceClient, ContentSettings
+
+        container = CONFIG["blob_container"]
+        bsc = BlobServiceClient.from_connection_string(conn_str)
+        cc = bsc.get_container_client(container)
+        json_content = ContentSettings(content_type="application/json")
+
+        with open(local_path, "rb") as f:
+            data = f.read()
+
+        # 1. latest/gendwh_raw_export.json (overwrite)
+        latest_blob = "latest/gendwh_raw_export.json"
+        cc.upload_blob(latest_blob, data, overwrite=True, content_settings=json_content)
+        print(f"\n  ☁ Uploaded: {container}/{latest_blob}")
+
+        # 2. archive/{timestamp}_export.json
+        ts = extracted_at.replace(":", "-").replace("+", "_")
+        archive_blob = f"archive/{ts}_export.json"
+        cc.upload_blob(archive_blob, data, overwrite=True, content_settings=json_content)
+        print(f"  ☁ Uploaded: {container}/{archive_blob}")
+
+        # Print blob URL from connection string
+        try:
+            parts = dict(p.split("=", 1) for p in conn_str.split(";") if "=" in p)
+            endpoint = parts.get("BlobEndpoint", "")
+            if endpoint:
+                print(f"  ☁ Latest URL: {endpoint.rstrip('/')}/{container}/{latest_blob}")
+        except Exception:
+            pass
+
+    except Exception as e:
+        print(f"\n  ⚠ Blob upload failed (local JSON is still saved): {e}")
 
 
 print("✓ Export function loaded")
