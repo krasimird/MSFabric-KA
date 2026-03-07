@@ -200,9 +200,13 @@ function populateStats() {
   s('statWorkspaces', KB.workspaces ? KB.workspaces.length : 0);
   const items = KB.workspaces ? KB.workspaces.reduce((n, ws) => n + (ws.items ? ws.items.length : 0), 0) : 0;
   s('statItems', items);
-  // Count tables from schemas (schemas is an object keyed by item_id, each value is an array of tables)
+  // Count tables from schemas (values can be array of tables OR object with .tables/.views/.procedures)
   let tables = 0, cols = 0;
-  if (KB.schemas) { for (const tblArr of Object.values(KB.schemas)) { for (const tbl of tblArr) { tables++; cols += tbl.columns ? tbl.columns.length : 0; } } }
+  if (KB.schemas) { for (const val of Object.values(KB.schemas)) {
+    if (!val) continue;
+    const tblList = Array.isArray(val) ? val : [...(val.tables||[]), ...(val.views||[]), ...(val.procedures||[])];
+    for (const tbl of tblList) { tables++; cols += tbl.columns ? tbl.columns.length : 0; }
+  } }
   s('statTables', tables);
   s('statColumns', cols);
   // Pipelines
@@ -218,50 +222,60 @@ function populateStats() {
 // ── RAG retrieval (keyword) ────────────────────────────────────
 function retrieveContext(query) {
   if (!KB) return '(No data loaded)';
-  const tokens = query.toLowerCase().replace(/[^a-z0-9а-яё_]/gi, ' ').split(/\s+/).filter(t => t.length > 2);
-  const chunks = [];
+  try {
+    const tokens = query.toLowerCase().replace(/[^a-z0-9а-яё_]/gi, ' ').split(/\s+/).filter(t => t.length > 2);
+    const chunks = [];
 
-  // Search in workspace/item names and definitions
-  if (KB.workspaces) for (const ws of KB.workspaces) {
-    for (const item of (ws.items || [])) {
-      const blob = JSON.stringify(item).toLowerCase();
+    // Search in workspace/item names and definitions
+    if (KB.workspaces) for (const ws of KB.workspaces) {
+      for (const item of (ws.items || [])) {
+        const blob = JSON.stringify(item).toLowerCase();
+        let score = 0;
+        for (const t of tokens) if (blob.includes(t)) score++;
+        if (score > 0) chunks.push({ score, text: `[${ws.name}] ${item.type}: ${item.name}\n${item.definition ? JSON.stringify(item.definition).slice(0, 2000) : '(no definition)'}` });
+      }
+    }
+
+    // Search in schemas (values can be array of tables OR object with .tables/.views/.procedures)
+    if (KB.schemas) for (const [itemId, val] of Object.entries(KB.schemas)) {
+      if (!val) continue;
+      const tblList = Array.isArray(val) ? val : [...(val.tables||[]), ...(val.views||[]), ...(val.procedures||[])];
+      const blob = JSON.stringify(val).toLowerCase();
       let score = 0;
       for (const t of tokens) if (blob.includes(t)) score++;
-      if (score > 0) chunks.push({ score, text: `[${ws.name}] ${item.type}: ${item.name}\n${item.definition ? JSON.stringify(item.definition).slice(0, 2000) : '(no definition)'}` });
+      if (score > 0) {
+        const label = val.item_type ? `${val.item_type} [${itemId.slice(0,8)}…]` : `Schema [${itemId.slice(0,8)}…]`;
+        chunks.push({ score, text: `${label}: ${tblList.length} tables\nTables: ${tblList.map(t=>t.table_name||t.name||t).join(', ')}\nColumns: ${tblList.flatMap(t=>(t.columns||[])).slice(0,50).map(c=>`${c.column_name||c.name} (${c.data_type||''})`).join(', ')}` });
+      }
     }
-  }
 
-  // Search in schemas (object keyed by item_id → array of {table_name, table_type, columns})
-  if (KB.schemas) for (const [itemId, tblArr] of Object.entries(KB.schemas)) {
-    const blob = JSON.stringify(tblArr).toLowerCase();
-    let score = 0;
-    for (const t of tokens) if (blob.includes(t)) score++;
-    if (score > 0) chunks.push({ score, text: `Schema [${itemId.slice(0,8)}…]: ${tblArr.length} tables\nTables: ${tblArr.map(t=>t.table_name||t.name||t).join(', ')}\nColumns: ${tblArr.flatMap(t=>(t.columns||[])).slice(0,50).map(c=>`${c.column_name||c.name} (${c.data_type||''})`).join(', ')}` });
-  }
+    // Search in metadata queries (KB.metadata.queries)
+    if (KB.metadata && KB.metadata.queries) for (const mq of KB.metadata.queries) {
+      const blob = JSON.stringify(mq).toLowerCase();
+      let score = 0;
+      for (const t of tokens) if (blob.includes(t)) score++;
+      if (score > 0) chunks.push({ score, text: `Metadata Query [${mq.layer||''}]: ${mq.target_table || mq.meta_table || 'unknown'}\nSQL: ${(mq.source_query || '').slice(0, 1500)}` });
+    }
 
-  // Search in metadata queries (KB.metadata.queries)
-  if (KB.metadata && KB.metadata.queries) for (const mq of KB.metadata.queries) {
-    const blob = JSON.stringify(mq).toLowerCase();
-    let score = 0;
-    for (const t of tokens) if (blob.includes(t)) score++;
-    if (score > 0) chunks.push({ score, text: `Metadata Query [${mq.layer||''}]: ${mq.target_table || mq.meta_table || 'unknown'}\nSQL: ${(mq.source_query || '').slice(0, 1500)}` });
-  }
+    // Search in bronze mappings (KB.metadata.bronze_meta)
+    if (KB.metadata && KB.metadata.bronze_meta) for (const bm of KB.metadata.bronze_meta) {
+      const blob = JSON.stringify(bm).toLowerCase();
+      let score = 0;
+      for (const t of tokens) if (blob.includes(t)) score++;
+      if (score > 0) chunks.push({ score, text: `Bronze Mapping: ${bm.target_table || 'unknown'} ← ${bm.source_schema||''}.${bm.source_table || 'unknown'}` });
+    }
 
-  // Search in bronze mappings (KB.metadata.bronze_meta)
-  if (KB.metadata && KB.metadata.bronze_meta) for (const bm of KB.metadata.bronze_meta) {
-    const blob = JSON.stringify(bm).toLowerCase();
-    let score = 0;
-    for (const t of tokens) if (blob.includes(t)) score++;
-    if (score > 0) chunks.push({ score, text: `Bronze Mapping: ${bm.target_table || 'unknown'} ← ${bm.source_schema||''}.${bm.source_table || 'unknown'}` });
+    chunks.sort((a, b) => b.score - a.score);
+    let ctx = '', budget = 12000;
+    for (const c of chunks) {
+      if (ctx.length + c.text.length > budget) break;
+      ctx += c.text + '\n---\n';
+    }
+    return ctx || '(No matching context found for this query)';
+  } catch (err) {
+    console.error('retrieveContext error:', err);
+    return '(Context retrieval failed — answering without metadata context)';
   }
-
-  chunks.sort((a, b) => b.score - a.score);
-  let ctx = '', budget = 12000;
-  for (const c of chunks) {
-    if (ctx.length + c.text.length > budget) break;
-    ctx += c.text + '\n---\n';
-  }
-  return ctx || '(No matching context found for this query)';
 }
 
 // ── System prompt ──────────────────────────────────────────────
