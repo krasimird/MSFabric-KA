@@ -164,6 +164,9 @@
    GenDWH Knowledge Assistant — Client-side RAG + Chat
    ═══════════════════════════════════════════════════════════════ */
 
+// ── Config ─────────────────────────────────────────────────────
+const DATA_URL = 'https://sainspiritka.blob.core.windows.net/gendwh-exports/latest/gendwh_raw_export.json';
+
 // ── State ──────────────────────────────────────────────────────
 let KB = null;           // Raw JSON export
 let chatHistory = [];    // {role, content} pairs for Claude API
@@ -179,18 +182,16 @@ const menuToggle= document.getElementById('menuToggle');
 // ── Data loading ───────────────────────────────────────────────
 async function loadData() {
   const statusEl = document.getElementById('dataStatus');
-  const paths = ['/data/gendwh_raw_export.json', 'https://sainspiritka.blob.core.windows.net/gendwh-exports/latest/gendwh_raw_export.json'];
-  for (const url of paths) {
-    try {
-      const resp = await fetch(url);
-      if (!resp.ok) continue;
-      KB = await resp.json();
-      populateStats();
-      statusEl.innerHTML = '<span class="dot dot-ok"></span> Data loaded ✓';
-      return;
-    } catch (_) { /* try next */ }
+  try {
+    statusEl.innerHTML = '<span class="dot dot-warn"></span> Loading data…';
+    const resp = await fetch(DATA_URL);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    KB = await resp.json();
+    populateStats();
+    statusEl.innerHTML = '<span class="dot dot-ok"></span> Data loaded ✓';
+  } catch (err) {
+    statusEl.innerHTML = '<span class="dot dot-err"></span> Failed to load data: ' + err.message;
   }
-  statusEl.innerHTML = '<span class="dot dot-err"></span> No data — place gendwh_raw_export.json in src/data/';
 }
 
 function populateStats() {
