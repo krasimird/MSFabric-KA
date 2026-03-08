@@ -2256,12 +2256,15 @@ function buildVisGraph(activities) {
 }
 
 async function ensureVisLoaded() {
-  if (window.vis) return;
+  if (window.vis && window.vis.Network) return;
   return new Promise((resolve, reject) => {
     const script = document.createElement('script');
     script.src = 'https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.2/vis-network.min.js';
-    script.onload = resolve;
-    script.onerror = reject;
+    script.onload = () => {
+      if (window.vis && window.vis.Network) resolve();
+      else reject(new Error('Vis.js loaded but vis.Network is not available'));
+    };
+    script.onerror = () => reject(new Error('Failed to load Vis.js from CDN'));
     document.head.appendChild(script);
   });
 }
@@ -2430,7 +2433,7 @@ async function sendMessage(text) {
         await visualizePipeline(text);
       }
     } catch (err) {
-      appendMessage('assistant', '⚠️ Skill error: ' + err.message);
+      appendMessage('assistant', '⚠️ Skill error: ' + (err && err.message ? err.message : String(err)));
       console.error('[SKILL] Error:', err);
     }
     return; // Don't send to Claude
