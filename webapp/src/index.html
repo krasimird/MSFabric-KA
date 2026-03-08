@@ -59,6 +59,33 @@
     .analysis-btn:hover { background: var(--teal); color: #fff; }
     .analysis-btn:disabled { opacity: .5; cursor: not-allowed; }
 
+    /* ── Примерни промптове panel ─────────────────────────────── */
+    .prompts-panel { padding-bottom: 4px; }
+    .prompts-toggle {
+      cursor: pointer; user-select: none; display: flex; align-items: center; gap: 4px;
+    }
+    .prompts-toggle:hover { color: var(--teal); }
+    .prompts-arrow { font-size: 10px; transition: transform .2s; display: inline-block; }
+    .prompts-arrow.open { transform: rotate(90deg); }
+    .prompts-body { padding-top: 6px; }
+    .prompt-cat {
+      font-size: 11px; font-weight: 600; color: var(--teal); margin: 8px 0 4px;
+      text-transform: none; letter-spacing: 0;
+    }
+    .prompt-cat:first-child { margin-top: 0; }
+    .prompt-row {
+      display: flex; align-items: flex-start; gap: 4px; margin-bottom: 3px;
+      font-size: 12px; line-height: 1.4; color: var(--text);
+    }
+    .prompt-text { flex: 1; word-break: break-word; }
+    .prompt-copy {
+      flex-shrink: 0; background: none; border: 1px solid var(--border); border-radius: 4px;
+      cursor: pointer; font-size: 11px; padding: 1px 5px; color: var(--text-muted);
+      transition: border-color .15s, color .15s; line-height: 1.3;
+    }
+    .prompt-copy:hover { border-color: var(--teal); color: var(--teal); }
+    .prompt-copy.copied { border-color: var(--teal); color: var(--teal); }
+
     /* ── Main Panel ───────────────────────────────────────────── */
     .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 
@@ -121,50 +148,12 @@
     .send-btn:hover { background: var(--teal-dark); }
     .send-btn:disabled { opacity: .5; cursor: not-allowed; }
 
-    /* ── Help Modal ─────────────────────────────────────────── */
-    .help-overlay {
-      display: none; position: fixed; inset: 0; z-index: 200;
-      background: rgba(0,0,0,.45); justify-content: center; align-items: center;
-    }
-    .help-overlay.open { display: flex; }
-    .help-modal {
-      background: var(--surface); border-radius: 12px; width: 90%; max-width: 720px;
-      max-height: 85vh; display: flex; flex-direction: column; box-shadow: 0 8px 32px rgba(0,0,0,.2);
-    }
-    .help-modal-header {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 16px 20px; border-bottom: 1px solid var(--border); flex-shrink: 0;
-    }
-    .help-modal-header h2 { font-size: 16px; color: var(--teal); margin: 0; }
-    .help-modal-close {
-      background: none; border: none; font-size: 22px; cursor: pointer;
-      color: var(--text-muted); padding: 4px 8px; border-radius: 4px;
-    }
-    .help-modal-close:hover { background: var(--border); color: var(--text); }
-    .help-modal-body {
-      padding: 20px 24px; overflow-y: auto; flex: 1; font-size: 14px; line-height: 1.7;
-    }
-    .help-modal-body h1 { font-size: 20px; color: var(--teal); margin: 0 0 12px; }
-    .help-modal-body h2 { font-size: 16px; color: var(--teal-dark); margin: 20px 0 8px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
-    .help-modal-body h3 { font-size: 14px; color: var(--text); margin: 16px 0 6px; }
-    .help-modal-body p { margin-bottom: 8px; }
-    .help-modal-body ul, .help-modal-body ol { margin: 4px 0 8px 20px; }
-    .help-modal-body li { margin-bottom: 4px; }
-    .help-modal-body code { background: #f0f0f0; padding: 1px 5px; border-radius: 3px; font-family: 'Cascadia Code', Consolas, monospace; font-size: 13px; }
-    .help-modal-body pre { background: #f6f6f6; padding: 10px 12px; border-radius: 6px; overflow-x: auto; font-size: 13px; margin: 8px 0; }
-    .help-modal-body pre code { background: none; padding: 0; }
-    .help-modal-body table { border-collapse: collapse; margin: 8px 0; font-size: 13px; width: 100%; }
-    .help-modal-body th, .help-modal-body td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; }
-    .help-modal-body th { background: var(--teal-light); font-weight: 600; }
-    .help-modal-body blockquote { border-left: 3px solid var(--teal); margin: 8px 0; padding: 4px 12px; color: var(--text-muted); background: var(--teal-light); border-radius: 0 6px 6px 0; }
-
     /* ── Mobile ───────────────────────────────────────────────── */
     @media (max-width: 768px) {
       .sidebar { position: fixed; left: -300px; top: 0; bottom: 0; z-index: 100; transition: left .25s; box-shadow: 2px 0 12px rgba(0,0,0,.15); }
       .sidebar.open { left: 0; }
       .menu-toggle { display: block; }
       .message { max-width: 95%; }
-      .help-modal { width: 96%; max-height: 90vh; }
     }
   </style>
 </head>
@@ -194,27 +183,35 @@
       <h3>🧠 AI Analysis</h3>
       <div class="progress-bar"><div class="progress-fill" id="analysisProgress"></div></div>
       <div class="analysis-status" id="analysisStatus">Ready</div>
-      <button class="analysis-btn" id="analyzeBtn" onclick="startAnalysis()">Analyze SQL Queries</button>
     </div>
-    <div class="sidebar-section">
-      <h3>📖 Help & Docs</h3>
-      <button class="quick-btn help-btn" onclick="openHelpDoc('onboarding_guide.md', '📖 Onboarding Guide')">📖 Onboarding Guide</button>
-      <button class="quick-btn help-btn" onclick="openHelpDoc('export_update_process.md', '🔄 Export Update Process')">🔄 Export Update Process</button>
-      <button class="quick-btn help-btn" onclick="openHelpDoc('monitoring.md', '📊 Monitoring & Costs')">📊 Monitoring & Costs</button>
+    <!-- Примерни промптове expandable panel -->
+    <div class="sidebar-section prompts-panel">
+      <h3 class="prompts-toggle" id="promptsToggle">📋 Примерни промптове <span class="prompts-arrow" id="promptsArrow">▸</span></h3>
+      <div class="prompts-body" id="promptsBody" style="display:none;">
+        <div class="prompt-cat">Lineage &amp; полета</div>
+        <div class="prompt-row"><span class="prompt-text">Откъде идва полето suma в stg_claim_expenses?</span><button class="prompt-copy" title="Copy">📋</button></div>
+        <div class="prompt-row"><span class="prompt-text">Как се изчислява cat_id в stg_claim_expenses?</span><button class="prompt-copy" title="Copy">📋</button></div>
+        <div class="prompt-row"><span class="prompt-text">Покажи пълния lineage на fact_premiums_written</span><button class="prompt-copy" title="Copy">📋</button></div>
+        <div class="prompt-cat">Таблици &amp; схеми</div>
+        <div class="prompt-row"><span class="prompt-text">Какви полета има dim_policy?</span><button class="prompt-copy" title="Copy">📋</button></div>
+        <div class="prompt-row"><span class="prompt-text">Кои таблици захранват Gold слоя?</span><button class="prompt-copy" title="Copy">📋</button></div>
+        <div class="prompt-row"><span class="prompt-text">Какви таблици има в Silver Staging?</span><button class="prompt-copy" title="Copy">📋</button></div>
+        <div class="prompt-cat">Pipelines &amp; оркестрация</div>
+        <div class="prompt-row"><span class="prompt-text">Обясни pipeline GenDWH_Orchestration_DP</span><button class="prompt-copy" title="Copy">📋</button></div>
+        <div class="prompt-row"><span class="prompt-text">Какви activities има в Bronze фазата на pipeline-а?</span><button class="prompt-copy" title="Copy">📋</button></div>
+        <div class="prompt-row"><span class="prompt-text">Как се параметризира GenDWH_Orchestrator_NB?</span><button class="prompt-copy" title="Copy">📋</button></div>
+        <div class="prompt-cat">Impact analysis</div>
+        <div class="prompt-row"><span class="prompt-text">Ако променя fact_premiums_written, кои reports ще бъдат засегнати?</span><button class="prompt-copy" title="Copy">📋</button></div>
+        <div class="prompt-row"><span class="prompt-text">Кои обекти зависят от dim_policy?</span><button class="prompt-copy" title="Copy">📋</button></div>
+        <div class="prompt-cat">Генериране на документи</div>
+        <div class="prompt-row"><span class="prompt-text">Генерирай Data Lineage Excel</span><button class="prompt-copy" title="Copy">📋</button></div>
+        <div class="prompt-row"><span class="prompt-text">Генерирай Data Dictionary</span><button class="prompt-copy" title="Copy">📋</button></div>
+        <div class="prompt-row"><span class="prompt-text">Генерирай Business Glossary</span><button class="prompt-copy" title="Copy">📋</button></div>
+        <div class="prompt-row"><span class="prompt-text">Направи ми справка за всички таблици в Gold слоя</span><button class="prompt-copy" title="Copy">📋</button></div>
+      </div>
     </div>
     <div class="data-status" id="dataStatus"><span class="dot dot-loading"></span> Loading data…</div>
   </aside>
-
-  <!-- Help Modal -->
-  <div class="help-overlay" id="helpOverlay">
-    <div class="help-modal">
-      <div class="help-modal-header">
-        <h2 id="helpModalTitle">Help</h2>
-        <button class="help-modal-close" onclick="closeHelpDoc()" title="Close">✕</button>
-      </div>
-      <div class="help-modal-body" id="helpModalBody">Loading…</div>
-    </div>
-  </div>
 
   <!-- Main -->
   <div class="main">
@@ -269,7 +266,6 @@ async function loadData() {
   const statusEl = document.getElementById('dataStatus');
   const analysisSection = document.getElementById('analysisSection');
   const analysisStatus = document.getElementById('analysisStatus');
-  const analyzeBtn = document.getElementById('analyzeBtn');
   const progressBar = document.getElementById('analysisProgress');
 
   try {
@@ -294,7 +290,6 @@ async function loadData() {
         buildPipelineIndex();
         progressBar.style.width = '100%';
         analysisStatus.textContent = `✅ Knowledge base loaded — ${KNOWLEDGE.length} chunks`;
-        analyzeBtn.textContent = 'Re-analyze (server)';
         console.log(`Loaded ${KNOWLEDGE.length} JSONL chunks from Blob.`);
       } else {
         throw new Error(`JSONL HTTP ${jsonlResp.status}`);
@@ -309,10 +304,8 @@ async function loadData() {
         analysisReady = true;
         progressBar.style.width = '100%';
         analysisStatus.textContent = '✅ Analysis cached (local) — lineage data ready';
-        analyzeBtn.textContent = 'Re-analyze';
       } else {
-        analysisStatus.textContent = `${(KB.metadata?.queries||[]).length} SQL queries — click to analyze`;
-        analyzeBtn.textContent = 'Analyze SQL Queries';
+        analysisStatus.textContent = `${(KB.metadata?.queries||[]).length} SQL queries — ready to analyze`;
       }
     }
   } catch (err) {
@@ -2179,7 +2172,7 @@ userInput.addEventListener('input', () => {
 });
 
 // Quick question buttons
-document.querySelectorAll('.quick-btn:not(.help-btn)').forEach(btn => {
+document.querySelectorAll('.quick-btn').forEach(btn => {
   btn.addEventListener('click', () => { userInput.value = btn.dataset.q; sendBtn.click(); });
 });
 
@@ -2187,42 +2180,27 @@ document.querySelectorAll('.quick-btn:not(.help-btn)').forEach(btn => {
 menuToggle.addEventListener('click', () => sidebar.classList.toggle('open'));
 chatArea.addEventListener('click', () => sidebar.classList.remove('open'));
 
-// ── Help/Docs modal ──────────────────────────────────────────────
-const DOCS_BASE_URL = 'https://sainspiritka.blob.core.windows.net/gendwh-exports/docs/';
-const helpOverlay = document.getElementById('helpOverlay');
-const helpModalTitle = document.getElementById('helpModalTitle');
-const helpModalBody = document.getElementById('helpModalBody');
+// ── Примерни промптове panel ────────────────────────────────────
+const promptsToggle = document.getElementById('promptsToggle');
+const promptsBody = document.getElementById('promptsBody');
+const promptsArrow = document.getElementById('promptsArrow');
 
-async function openHelpDoc(filename, title) {
-  helpModalTitle.textContent = title || 'Help';
-  helpModalBody.innerHTML = '<p style="color:var(--text-muted)">Loading documentation…</p>';
-  helpOverlay.classList.add('open');
-  try {
-    // Try Blob Storage first, fall back to local docs/ folder
-    let resp = await fetch(DOCS_BASE_URL + filename);
-    if (!resp.ok) {
-      resp = await fetch('docs/' + filename);
-    }
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const md = await resp.text();
-    helpModalBody.innerHTML = marked.parse(md);
-  } catch (err) {
-    helpModalBody.innerHTML = `<p style="color:#d13438">Failed to load documentation: ${err.message}</p>`;
-  }
-}
-
-function closeHelpDoc() {
-  helpOverlay.classList.remove('open');
-}
-
-// Close modal on overlay click (outside the modal)
-helpOverlay.addEventListener('click', (e) => {
-  if (e.target === helpOverlay) closeHelpDoc();
+promptsToggle.addEventListener('click', () => {
+  const open = promptsBody.style.display !== 'none';
+  promptsBody.style.display = open ? 'none' : 'block';
+  promptsArrow.classList.toggle('open', !open);
 });
 
-// Close modal on Escape key
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && helpOverlay.classList.contains('open')) closeHelpDoc();
+document.querySelectorAll('.prompt-copy').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const text = btn.parentElement.querySelector('.prompt-text').textContent;
+    navigator.clipboard.writeText(text).then(() => {
+      const orig = btn.textContent;
+      btn.textContent = '✓ Копирано';
+      btn.classList.add('copied');
+      setTimeout(() => { btn.textContent = orig; btn.classList.remove('copied'); }, 1200);
+    });
+  });
 });
 
 // ── Init ───────────────────────────────────────────────────────
