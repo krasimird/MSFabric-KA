@@ -754,13 +754,22 @@ async function retrieveContext(query) {
       || tokens.some(t => PIPELINE_INDEX[t]);
     const pipelineBoost = isPipelineQuery ? 15 : 0;
 
+    // Detect report queries — report names (GEN_PBI_*) or report-related keywords
+    const isReportQuery = /report|репорт|визуализаци|dashboard|дашборд|GEN_PBI_|засегнати.?report|кои.?report|страниц|page/i.test(query)
+      || tokens.some(t => t.startsWith('gen_pbi_'));
+    const reportBoost = isReportQuery ? 15 : 0;
+
+    // Detect impact analysis queries
+    const isImpactQuery = /impact|засегнат|ако промен|if.*change|кои.?report.*използва|използва.?таблиц|affected|зависим/i.test(query);
+    const impactBoost = isImpactQuery ? 18 : 0;
+
     // Detect chain lineage queries (end-to-end tracing)
     const isChainQuery = /от платинум до бронз|end.to.end|full lineage|пълен lineage|проследи до|проследи линеадж|trace.*lineage|от.+до бронз|platinum.*bronze|бронз.*платинум|откъде идва|where does.*come from|lineage.*бронз/i.test(query);
 
     console.log(`[RAG] Query: "${query}"`);
     console.log(`[RAG] Tokens (${tokens.length}): ${tokens.join(', ')}`);
     console.log(`[RAG] Compound tokens: ${compoundTokens.join(', ') || 'none'}`);
-    console.log(`[RAG] Warehouse query: ${isWarehouseQuery}, Pipeline query: ${isPipelineQuery}, Chain query: ${isChainQuery}`);
+    console.log(`[RAG] Warehouse query: ${isWarehouseQuery}, Pipeline query: ${isPipelineQuery}, Chain query: ${isChainQuery}, Report query: ${isReportQuery}, Impact query: ${isImpactQuery}`);
     console.log(`[RAG] KNOWLEDGE chunks: ${KNOWLEDGE.length}, analysisReady: ${analysisReady}`);
     if (KNOWLEDGE.length > 0) {
       const types = {};
@@ -833,6 +842,19 @@ async function retrieveContext(query) {
         } else if (chunk.type === 'warehouse_sproc') {
           text = `Stored Procedure: [${chunk.schema}].[${chunk.name}]\nSQL:\n${(chunk.definition||'').slice(0,3000)}`;
           score += 4 + warehouseBoost;
+        } else if (chunk.type === 'report_overview') {
+          text = `Report Overview: ${chunk.report_name}\nWorkspace: ${chunk.workspace||''}\nSemantic Model: ${chunk.semantic_model_name||chunk.semantic_model_id||'?'}\nPages: ${chunk.page_count||0}, Visuals: ${chunk.total_visuals||0}\nTables used: ${(chunk.unique_tables||[]).join(', ')}\nFields: ${(chunk.unique_fields||[]).join(', ')}`;
+          score += 6 + reportBoost;
+        } else if (chunk.type === 'report_page') {
+          text = `Report Page: ${chunk.report_name} → ${chunk.page_name}\nVisuals: ${chunk.visual_count||0} (${Object.entries(chunk.visual_types||{}).map(([k,v])=>`${k}:${v}`).join(', ')})\nTables: ${(chunk.tables_used||[]).join(', ')}\nFields: ${(chunk.fields_used||[]).join(', ')}`;
+          score += 5 + reportBoost;
+        } else if (chunk.type === 'report_impact') {
+          text = `Impact Analysis: table "${chunk.table_name}" is used in ${chunk.report_count||0} report(s): ${(chunk.report_names||[]).join(', ')}\nDetails: ${(chunk.used_in_reports||[]).slice(0,30).map(u=>`${u.report_name}/${u.page_name}: ${u.field}`).join('; ')}`;
+          score += 4 + reportBoost + impactBoost;
+          // Extra boost if the table_name matches a query token
+          const tblLower = (chunk.table_name||'').toLowerCase();
+          if (compoundTokens.some(t => tblLower.includes(t) || t.includes(tblLower))) score += 12;
+          if (splitTokens.some(t => tblLower.includes(t))) score += 3;
         } else {
           text = `${chunk.type}: ${chunk.id}\n${JSON.stringify(chunk).slice(0, 500)}`;
         }
@@ -947,19 +969,25 @@ async function retrieveContext(query) {
     }
 
     // For lineage queries: prioritise chain-relevant chunks (field_detail, table_lineage, bronze)
-    // by sorting them first within the same score tier
+    // For report/impact queries: prioritise report chunks within same score tier
     const CHAIN_TYPES = new Set(['field_detail', 'table_lineage']);
+    const REPORT_TYPES = new Set(['report_overview', 'report_page', 'report_impact']);
     chunks.sort((a, b) => {
       if (b.score !== a.score) return b.score - a.score;
       if (isLineageQuery) {
         const aChain = CHAIN_TYPES.has(a.type) ? 1 : 0;
         const bChain = CHAIN_TYPES.has(b.type) ? 1 : 0;
-        return bChain - aChain;
+        if (bChain !== aChain) return bChain - aChain;
+      }
+      if (isReportQuery || isImpactQuery) {
+        const aRpt = REPORT_TYPES.has(a.type) ? 1 : 0;
+        const bRpt = REPORT_TYPES.has(b.type) ? 1 : 0;
+        if (bRpt !== aRpt) return bRpt - aRpt;
       }
       return 0;
     });
-    // Budget: lineage queries get 20k to ensure Bronze completeness; warehouse/pipeline 16k; default 12k
-    let ctx = '', budget = isLineageQuery ? 20000 : isWarehouseQuery ? 16000 : isPipelineQuery ? 16000 : 12000;
+    // Budget: lineage queries get 20k to ensure Bronze completeness; warehouse/pipeline/report 16k; default 12k
+    let ctx = '', budget = isLineageQuery ? 20000 : isWarehouseQuery ? 16000 : isPipelineQuery ? 16000 : (isReportQuery || isImpactQuery) ? 16000 : 12000;
     for (const c of chunks) {
       if (ctx.length + c.text.length > budget) { if (ctx.length > 0) break; }
       ctx += c.text + '\n---\n';
