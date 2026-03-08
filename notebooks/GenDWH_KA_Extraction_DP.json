@@ -1,48 +1,46 @@
 {
-  "properties": {
-    "activities": [
-      {
-        "name": "Run_Extraction_Notebook",
-        "type": "TridentNotebook",
-        "dependsOn": [],
-        "policy": {
-          "timeout": "00:20:00",
-          "retry": 2,
-          "retryIntervalInSeconds": 60
-        },
-        "typeProperties": {
-          "notebookId": "8aefd8c4-73f9-4389-a9e1-2f8ee5c62847",
-          "workspaceId": "f5ae753e-9be5-4236-8e0b-89e2ca21084c"
-        }
+  "activities": [
+    {
+      "name": "Run_Extraction_Notebook",
+      "type": "TridentNotebook",
+      "dependsOn": [],
+      "policy": {
+        "timeout": "00:20:00",
+        "retry": 2,
+        "retryIntervalInSeconds": 60
       },
-      {
-        "name": "Send_Failure_Email",
-        "type": "Office365Outlook",
-        "dependsOn": [
-          {
-            "activity": "Run_Extraction_Notebook",
-            "dependencyConditions": ["Failed"]
-          }
-        ],
-        "typeProperties": {
-          "method": "POST",
-          "path": "/v2/Mail",
-          "body": {
-            "To": "krasi.donchev@inspirit.bg",
-            "Subject": "GenDWH KA Extraction FAILED — @{pipeline().Pipeline} — @{utcNow()}",
-            "Body": "<h2>⚠ Extraction Pipeline Failed</h2><p><b>Pipeline:</b> @{pipeline().Pipeline}</p><p><b>Run ID:</b> @{pipeline().RunId}</p><p><b>Time:</b> @{utcNow()}</p><p><b>Error:</b> @{activity('Run_Extraction_Notebook').error?.message}</p><p>Check the Fabric Monitor for details.</p>",
-            "Importance": "High"
-          }
+      "typeProperties": {
+        "notebookId": "8aefd8c4-73f9-4389-a9e1-2f8ee5c62847",
+        "workspaceId": "f5ae753e-9be5-4236-8e0b-89e2ca21084c"
+      }
+    },
+    {
+      "name": "Send_Failure_Email",
+      "type": "Office365Outlook",
+      "dependsOn": [
+        {
+          "activity": "Run_Extraction_Notebook",
+          "dependencyConditions": ["Failed"]
+        }
+      ],
+      "typeProperties": {
+        "method": "POST",
+        "path": "/v2/Mail",
+        "body": {
+          "To": "krasi.donchev@inspirit.bg",
+          "Subject": "GenDWH KA Extraction FAILED — @{pipeline().Pipeline} — @{utcNow()}",
+          "Body": "<h2>⚠ Extraction Pipeline Failed</h2><p><b>Pipeline:</b> @{pipeline().Pipeline}</p><p><b>Run ID:</b> @{pipeline().RunId}</p><p><b>Time:</b> @{utcNow()}</p><p><b>Error:</b> @{activity('Run_Extraction_Notebook').error?.message}</p><p>Check the Fabric Monitor for details.</p>",
+          "Importance": "High"
         }
       }
-    ],
-    "annotations": [
-      "GenDWH",
-      "KA",
-      "Extraction",
-      "Scheduled"
-    ]
-  },
+    }
+  ],
+  "annotations": [
+    "GenDWH",
+    "KA",
+    "Extraction",
+    "Scheduled"
+  ],
   "schedule": {
     "frequency": "Week",
     "interval": 1,
