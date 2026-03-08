@@ -722,21 +722,18 @@ const TRANSFORM_COLORS = {
   literal: 'E8E8E8', expression: 'FFF3CD', aggregate: 'F8D7DA',
 };
 
-function safeSheetName(name, maxLen = 31) {
-  let s = name.replace(/[\\/*?:\[\]]/g, '_').slice(0, maxLen);
-  if (s.length === 0) s = 'Sheet';
-  return s;
-}
-
-function uniqueSheetName(name, usedNames) {
-  let base = safeSheetName(name);
-  if (!usedNames.has(base)) { usedNames.add(base); return base; }
-  for (let i = 2; i < 9999; i++) {
-    const suffix = '_' + i;
-    const candidate = safeSheetName(name, 31 - suffix.length) + suffix;
-    if (!usedNames.has(candidate)) { usedNames.add(candidate); return candidate; }
+function safeName(base, usedNames) {
+  let name = base.replace(/[\\/*?:\[\]]/g, '').substring(0, 31);
+  if (name.length === 0) name = 'Sheet';
+  let candidate = name;
+  let counter = 2;
+  while (usedNames.has(candidate)) {
+    const suffix = '_' + counter;
+    candidate = name.substring(0, 31 - suffix.length) + suffix;
+    counter++;
   }
-  return base;
+  usedNames.add(candidate);
+  return candidate;
 }
 
 function styleHeader(row, colCount) {
@@ -868,7 +865,7 @@ async function generateLineageExcel() {
 
   // ── INDEX sheet ──────────────────────────────────────────────
   log('Creating INDEX sheet...');
-  const idxWs = wb.addWorksheet(uniqueSheetName('INDEX', usedNames));
+  const idxWs = wb.addWorksheet(safeName('INDEX', usedNames));
   styleTitleRow(idxWs, 'GenDWH Data Lineage', 4);
   idxWs.getCell('A2').value = `Generated: ${new Date().toISOString().slice(0,10)}`;
   idxWs.getCell('A2').font = { name: 'Calibri', size: 10, italic: true, color: { argb: '666666' } };
@@ -887,7 +884,7 @@ async function generateLineageExcel() {
   let idxRow = 5;
   for (const [zone, tables] of Object.entries(zones)) {
     // Create zone sheet first so we can link to it
-    const zoneSheetName = uniqueSheetName(zone, usedNames);
+    const zoneSheetName = safeName(zone, usedNames);
     zoneSheetNames[zone] = zoneSheetName;
     const r = idxWs.getRow(idxRow);
     r.getCell(1).value = zone;
@@ -919,7 +916,7 @@ async function generateLineageExcel() {
     for (let ti = 0; ti < tables.length; ti++) {
       const tbl = tables[ti];
       // Create detail sheet — use zone+name as key to avoid cross-zone collisions
-      const detailName = uniqueSheetName(tbl.name, usedNames);
+      const detailName = safeName(tbl.name, usedNames);
       const detailKey = zone + '::' + tbl.name;
       detailSheetMap[detailKey] = detailName;
 
