@@ -188,14 +188,16 @@
 
 // ── Config ─────────────────────────────────────────────────────
 const DATA_URL = 'https://sainspiritka.blob.core.windows.net/gendwh-exports/latest/gendwh_raw_export.json';
+const JSONL_URL = 'https://sainspiritka.blob.core.windows.net/gendwh-exports/latest/gendwh_knowledge.jsonl';
 
 // ── State ──────────────────────────────────────────────────────
 let KB = null;           // Raw JSON export
+let KNOWLEDGE = [];      // Pre-built JSONL chunks (from server-side analysis)
 let chatHistory = [];    // {role, content} pairs for Claude API
 const MAX_HISTORY = 10;  // Last N messages sent as context
 const kbCache = new KBCache();
 let aiAnalysis = null;
-let analysisReady = false; // true when IndexedDB has lineage data
+let analysisReady = false; // true when JSONL knowledge or IndexedDB has lineage data
 
 // ── DOM refs ───────────────────────────────────────────────────
 const chatArea  = document.getElementById('chatArea');
@@ -207,31 +209,52 @@ const menuToggle= document.getElementById('menuToggle');
 // ── Data loading ───────────────────────────────────────────────
 async function loadData() {
   const statusEl = document.getElementById('dataStatus');
+  const analysisSection = document.getElementById('analysisSection');
+  const analysisStatus = document.getElementById('analysisStatus');
+  const analyzeBtn = document.getElementById('analyzeBtn');
+  const progressBar = document.getElementById('analysisProgress');
+
   try {
-    statusEl.innerHTML = '<span class="dot dot-warn"></span> Loading data…';
+    statusEl.innerHTML = '<span class="dot dot-loading"></span> Loading data…';
     const resp = await fetch(DATA_URL);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     KB = await resp.json();
     populateStats();
     statusEl.innerHTML = '<span class="dot dot-ok"></span> Data loaded ✓';
 
-    // Check if AI analysis is cached for this export
-    await kbCache.open();
-    const fp = KBCache.fingerprint(KB);
-    const cached = await kbCache.isAnalyzed(fp);
-    const analysisSection = document.getElementById('analysisSection');
-    const analysisStatus = document.getElementById('analysisStatus');
-    const analyzeBtn = document.getElementById('analyzeBtn');
+    // Try to load pre-built JSONL from Blob (server-side analysis)
     analysisSection.style.display = '';
-
-    if (cached) {
-      analysisReady = true;
-      document.getElementById('analysisProgress').style.width = '100%';
-      analysisStatus.textContent = '✅ Analysis cached — lineage data ready';
-      analyzeBtn.textContent = 'Re-analyze';
-    } else {
-      analysisStatus.textContent = `${(KB.metadata?.queries||[]).length} SQL queries ready for analysis`;
-      analyzeBtn.textContent = 'Analyze SQL Queries';
+    analysisStatus.textContent = 'Loading knowledge base…';
+    try {
+      const jsonlResp = await fetch(JSONL_URL);
+      if (jsonlResp.ok) {
+        const text = await jsonlResp.text();
+        KNOWLEDGE = text.trim().split('\n').map(line => {
+          try { return JSON.parse(line); } catch { return null; }
+        }).filter(Boolean);
+        analysisReady = true;
+        progressBar.style.width = '100%';
+        analysisStatus.textContent = `✅ Knowledge base loaded — ${KNOWLEDGE.length} chunks`;
+        analyzeBtn.textContent = 'Re-analyze (server)';
+        console.log(`Loaded ${KNOWLEDGE.length} JSONL chunks from Blob.`);
+      } else {
+        throw new Error(`JSONL HTTP ${jsonlResp.status}`);
+      }
+    } catch (jsonlErr) {
+      console.warn('JSONL not available from Blob:', jsonlErr.message);
+      // Fallback: check IndexedDB cache
+      await kbCache.open();
+      const fp = KBCache.fingerprint(KB);
+      const cached = await kbCache.isAnalyzed(fp);
+      if (cached) {
+        analysisReady = true;
+        progressBar.style.width = '100%';
+        analysisStatus.textContent = '✅ Analysis cached (local) — lineage data ready';
+        analyzeBtn.textContent = 'Re-analyze';
+      } else {
+        analysisStatus.textContent = `${(KB.metadata?.queries||[]).length} SQL queries — click to analyze`;
+        analyzeBtn.textContent = 'Analyze SQL Queries';
+      }
     }
   } catch (err) {
     statusEl.innerHTML = '<span class="dot dot-err"></span> Failed to load data: ' + err.message;
@@ -263,29 +286,39 @@ function populateStats() {
   s('statDefinitions', definitions);
 }
 
-// ── AI Analysis trigger ───────────────────────────────────────
+// ── AI Analysis trigger (server-side) ─────────────────────────
 async function startAnalysis() {
   if (!KB) { alert('Data not loaded yet'); return; }
   const btn = document.getElementById('analyzeBtn');
   const progress = document.getElementById('analysisProgress');
   const status = document.getElementById('analysisStatus');
   btn.disabled = true;
-  btn.textContent = 'Analyzing…';
+  btn.textContent = 'Analyzing on server…';
   analysisReady = false;
-
-  aiAnalysis = new AIAnalysis(kbCache);
-  aiAnalysis.onProgress = (current, total, table) => {
-    const pct = Math.round((current / total) * 100);
-    progress.style.width = pct + '%';
-    status.textContent = `${current}/${total} queries — ${table}`;
-  };
+  progress.style.width = '10%';
+  status.textContent = 'Sending analysis request to server…';
 
   try {
-    await aiAnalysis.analyzeAll(KB);
+    // Trigger server-side analysis via /api/analyze
+    const resp = await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    const result = await resp.json();
+
+    if (!resp.ok) throw new Error(result.error || `HTTP ${resp.status}`);
+
+    progress.style.width = '90%';
+    status.textContent = 'Loading updated knowledge base…';
+
+    // Reload JSONL from Blob
+    const jsonlResp = await fetch(JSONL_URL + '?t=' + Date.now());
+    if (jsonlResp.ok) {
+      const text = await jsonlResp.text();
+      KNOWLEDGE = text.trim().split('\n').map(line => { try { return JSON.parse(line); } catch { return null; } }).filter(Boolean);
+    }
+
     analysisReady = true;
-    status.textContent = '✅ Analysis complete — lineage data ready';
     progress.style.width = '100%';
-    btn.textContent = 'Re-analyze';
+    status.textContent = `✅ Done in ${result.elapsed_seconds}s — ${result.queries_analyzed} analyzed, ${result.queries_cached} cached, ${result.queries_failed || 0} failed. ${KNOWLEDGE.length} chunks.`;
+    btn.textContent = 'Re-analyze (server)';
   } catch (err) {
     status.textContent = '❌ Analysis failed: ' + err.message;
     console.error('Analysis error:', err);
@@ -301,31 +334,43 @@ async function retrieveContext(query) {
     const tokens = query.toLowerCase().replace(/[^a-z0-9а-яё_]/gi, ' ').split(/\s+/).filter(t => t.length > 2);
     const chunks = [];
 
-    // ── Knowledge Base search (AI-analyzed lineage) ───────────
-    if (analysisReady) {
-      // Search field lineage
+    // ── Knowledge Base search (pre-built JSONL from server) ────
+    if (analysisReady && KNOWLEDGE.length > 0) {
+      for (const chunk of KNOWLEDGE) {
+        const blob = JSON.stringify(chunk).toLowerCase();
+        let score = 0;
+        for (const t of tokens) if (blob.includes(t)) score++;
+        if (score === 0) continue;
+        // Format based on chunk type
+        let text = '';
+        if (chunk.type === 'field_detail') {
+          text = `AI Lineage: ${chunk.table}.${chunk.target_field} ← ${chunk.source_table||'?'}.${chunk.source_column||'?'}\nType: ${chunk.transformation_type||''}\nExpr: ${chunk.expression||''}\nLogic: ${chunk.business_logic||''}`;
+          score += 10; // Boost AI lineage results
+        } else if (chunk.type === 'table_lineage') {
+          text = `Table Summary: ${chunk.id} (${chunk.layer} ${chunk.mode})\nFields: ${chunk.field_count}\nSources: ${chunk.source_tables?.join(', ')||'none'}\nTransformations: ${chunk.transformation_types?.join(', ')||'none'}`;
+          score += 8;
+        } else if (chunk.type === 'execution_chain') {
+          text = `Execution Chain: ${chunk.pipeline}\nNotebooks: ${chunk.notebooks?.join(' → ')||'none'}\nAffects: ${chunk.target_tables?.slice(0,10).join(', ')||'none'}`;
+          score += 5;
+        } else if (chunk.type === 'warehouse_view') {
+          text = `Warehouse View: [${chunk.schema}].[${chunk.name}]\nSQL:\n${(chunk.definition||'').slice(0,2000)}`;
+          score += 3;
+        } else if (chunk.type === 'warehouse_sproc') {
+          text = `Stored Procedure: [${chunk.schema}].[${chunk.name}]\nSQL:\n${(chunk.definition||'').slice(0,2000)}`;
+          score += 4;
+        } else {
+          text = `${chunk.type}: ${chunk.id}\n${JSON.stringify(chunk).slice(0, 500)}`;
+        }
+        chunks.push({ score, text });
+      }
+    } else if (analysisReady) {
+      // Fallback: search IndexedDB cache
       for (const token of tokens) {
         const matches = await kbCache.searchLineage(token);
         for (const m of matches.slice(0, 20)) {
           const text = `AI Lineage: ${m.target_table}.${m.target_field} ← ${m.source_table||'?'}.${m.source_column||'?'}\nType: ${m.transformation_type||''}\nExpr: ${m.expression||''}\nLogic: ${m.business_logic||''}`;
           chunks.push({ score: 10 + (tokens.filter(t => text.toLowerCase().includes(t)).length), text });
         }
-      }
-      // Search table summaries
-      const summaries = await kbCache.getAll('table_summary');
-      for (const s of summaries) {
-        const blob = `${s.id} ${s.source_tables?.join(' ')||''} ${s.fields?.join(' ')||''}`.toLowerCase();
-        let score = 0;
-        for (const t of tokens) if (blob.includes(t)) score++;
-        if (score > 0) chunks.push({ score: score + 8, text: `Table Summary: ${s.id} (${s.layer} ${s.mode})\nFields: ${s.field_count}\nSources: ${s.source_tables?.join(', ')||'none'}\nTransformations: ${s.transformation_types?.join(', ')||'none'}` });
-      }
-      // Search execution chains
-      const chains = await kbCache.getAll('execution_chain');
-      for (const c of chains) {
-        const blob = `${c.pipeline} ${c.notebooks?.join(' ')||''} ${c.target_tables?.join(' ')||''}`.toLowerCase();
-        let score = 0;
-        for (const t of tokens) if (blob.includes(t)) score++;
-        if (score > 0) chunks.push({ score: score + 5, text: `Execution Chain: ${c.pipeline}\nNotebooks: ${c.notebooks?.join(' → ')||'none'}\nAffects: ${c.target_tables?.slice(0,10).join(', ')||'none'}` });
       }
     }
 
