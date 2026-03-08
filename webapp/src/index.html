@@ -387,6 +387,15 @@ async function startAnalysis() {
   }
 }
 
+// ── Helper: resolve pipeline definition from KB.definitions ──
+function getPipelineContent(itemId) {
+  if (!KB || !KB.definitions) return null;
+  const parts = KB.definitions[itemId];
+  if (!Array.isArray(parts)) return null;
+  const pipelinePart = parts.find(p => p.path === 'pipeline-content.json');
+  return pipelinePart ? (pipelinePart.payload || null) : null;
+}
+
 // ── Pipeline index: map pipeline/activity names → pipeline item name ──
 function buildPipelineIndex() {
   PIPELINE_INDEX = {};
@@ -396,9 +405,9 @@ function buildPipelineIndex() {
       if (item.type !== 'DataPipeline') continue;
       const pName = (item.displayName || item.name || '').toLowerCase();
       if (pName) PIPELINE_INDEX[pName] = pName;
-      // Parse definition for activity names
-      if (!item.definition) continue;
-      const def = typeof item.definition === 'string' ? item.definition : JSON.stringify(item.definition);
+      // Look up definition from KB.definitions (NOT item.definition)
+      const def = getPipelineContent(item.id);
+      if (!def) continue;
       // Match "name":"ActivityName" patterns in pipeline JSON
       const activityMatches = def.match(/"name"\s*:\s*"([^"]+)"/gi) || [];
       for (const m of activityMatches) {
@@ -756,17 +765,24 @@ async function retrieveContext(query) {
       }
     }
 
-    // Search in workspace/item names and definitions
+    // Search in workspace/item names and definitions (resolve from KB.definitions)
     if (KB.workspaces) for (const ws of KB.workspaces) {
+      const wsName = ws.displayName || ws.name || ws.id;
       for (const item of (ws.items || [])) {
-        const blob = JSON.stringify(item).toLowerCase();
+        const itemName = item.displayName || item.name || item.id;
+        const blob = (JSON.stringify(item) + ' ' + itemName).toLowerCase();
         let score = 0;
         for (const t of tokens) if (blob.includes(t)) score++;
-        if (score === 0) continue;
         const isPipeline = item.type === 'DataPipeline';
-        // For pipeline items: extract activity names and include them in the text
-        if (isPipeline && item.definition) {
-          const def = typeof item.definition === 'string' ? item.definition : JSON.stringify(item.definition);
+        // For pipelines, also check definition content for token matches
+        const def = isPipeline ? getPipelineContent(item.id) : null;
+        if (def) {
+          const defLower = def.toLowerCase();
+          for (const t of tokens) if (defLower.includes(t)) score++;
+        }
+        if (score === 0) continue;
+        // For pipeline items: extract activity names and include full definition
+        if (isPipeline && def) {
           const actNames = [];
           const actMatches = def.match(/"name"\s*:\s*"([^"]+)"/gi) || [];
           for (const m of actMatches) {
@@ -774,10 +790,13 @@ async function retrieveContext(query) {
             if (nm && nm[1].length > 2) actNames.push(nm[1]);
           }
           const uniqueActs = [...new Set(actNames)];
-          const text = `[${ws.name}] Pipeline: ${item.name}\nActivities (${uniqueActs.length}): ${uniqueActs.join(', ')}\nDefinition: ${def.slice(0, 4000)}`;
+          const text = `[${wsName}] Pipeline: ${itemName}\nActivities (${uniqueActs.length}): ${uniqueActs.join(', ')}\nDefinition: ${def.slice(0, 6000)}`;
           chunks.push({ score: score + pipelineBoost, text, type: 'raw_pipeline' });
+        } else if (isPipeline) {
+          // Pipeline without definition — still include basic info
+          chunks.push({ score: score + pipelineBoost, text: `[${wsName}] Pipeline: ${itemName}\n(definition not available)`, type: 'raw_pipeline' });
         } else {
-          chunks.push({ score, text: `[${ws.name}] ${item.type}: ${item.name}\n${item.definition ? JSON.stringify(item.definition).slice(0, 2000) : '(no definition)'}` });
+          chunks.push({ score, text: `[${wsName}] ${item.type}: ${itemName}\n(no inline definition)` });
         }
       }
     }
