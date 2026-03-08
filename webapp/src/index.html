@@ -198,9 +198,9 @@
     </div>
     <div class="sidebar-section">
       <h3>📖 Help & Docs</h3>
-      <button class="quick-btn" onclick="openHelpDoc('onboarding_guide.md', '📖 Onboarding Guide')">📖 Onboarding Guide</button>
-      <button class="quick-btn" onclick="openHelpDoc('export_update_process.md', '🔄 Export Update Process')">🔄 Export Update Process</button>
-      <button class="quick-btn" onclick="openHelpDoc('monitoring.md', '📊 Monitoring & Costs')">📊 Monitoring & Costs</button>
+      <button class="quick-btn help-btn" onclick="openHelpDoc('onboarding_guide.md', '📖 Onboarding Guide')">📖 Onboarding Guide</button>
+      <button class="quick-btn help-btn" onclick="openHelpDoc('export_update_process.md', '🔄 Export Update Process')">🔄 Export Update Process</button>
+      <button class="quick-btn help-btn" onclick="openHelpDoc('monitoring.md', '📊 Monitoring & Costs')">📊 Monitoring & Costs</button>
     </div>
     <div class="data-status" id="dataStatus"><span class="dot dot-loading"></span> Loading data…</div>
   </aside>
@@ -1914,7 +1914,7 @@ userInput.addEventListener('input', () => {
 });
 
 // Quick question buttons
-document.querySelectorAll('.quick-btn').forEach(btn => {
+document.querySelectorAll('.quick-btn:not(.help-btn)').forEach(btn => {
   btn.addEventListener('click', () => { userInput.value = btn.dataset.q; sendBtn.click(); });
 });
 
