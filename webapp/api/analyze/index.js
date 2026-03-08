@@ -238,203 +238,8 @@ function buildWarehouseLineage(KB) {
   return chunks;
 }
 
-// ── Report metadata extraction ──────────────────────────────
-function hashDefinition(parts) {
-  const sig = parts.map(p => `${p.path}:${(p.payload || "").length}`).join("|");
-  return crypto.createHash("sha256").update(sig).digest("hex").slice(0, 16);
-}
-
-/**
- * Recursively extract table.column refs from a Power BI prototypeQuery AST.
- * Resolves Source aliases via the From clause.
- */
-function extractFieldRefs(node, sourceMap, out) {
-  if (!node || typeof node !== "object") return;
-  if (Array.isArray(node)) { node.forEach(n => extractFieldRefs(n, sourceMap, out)); return; }
-  // Build alias map from From clause
-  if (Array.isArray(node.From)) {
-    for (const f of node.From) {
-      if (f.Name && f.Entity) sourceMap[f.Name] = f.Entity;
-    }
-  }
-  // Capture Column or Measure references
-  if (node.Property && node.Expression) {
-    const sr = node.Expression.SourceRef || {};
-    const alias = sr.Source || sr.Entity || "";
-    const entity = sourceMap[alias] || alias;
-    if (entity) out.add(`${entity}.${node.Property}`);
-  }
-  for (const v of Object.values(node)) extractFieldRefs(v, sourceMap, out);
-}
-
-function buildReportChunks(KB, cache, log) {
-  const chunks = [];
-  if (!KB.workspaces || !KB.definitions) return chunks;
-
-  // Map workspace + report items
-  const reports = [];
-  for (const ws of KB.workspaces) {
-    for (const item of (ws.items || [])) {
-      if (item.type === "Report") {
-        reports.push({ id: item.id, name: item.displayName, workspace: ws.displayName });
-      }
-    }
-  }
-  log(`Report extraction: found ${reports.length} Report items (skipping PaginatedReport).`);
-
-  // Impact index: table → [{report, page, field}]
-  const impactIndex = {};
-
-  for (const rpt of reports) {
-    const defParts = KB.definitions[rpt.id];
-    if (!defParts || !Array.isArray(defParts)) continue;
-
-    // Cache check: skip if definition unchanged
-    const defHash = hashDefinition(defParts);
-    const cacheKey = `rpt_${rpt.id}_${defHash}`;
-    if (cache[cacheKey]) {
-      // Restore cached chunks
-      for (const c of cache[cacheKey]) {
-        chunks.push(c);
-        // Rebuild impact index from cached page chunks
-        if (c.type === "report_page") {
-          for (const fld of (c.fields_used || [])) {
-            const tbl = fld.split(".")[0];
-            if (!impactIndex[tbl]) impactIndex[tbl] = [];
-            impactIndex[tbl].push({ report_name: c.report_name, page_name: c.page_name, field: fld });
-          }
-        }
-      }
-      continue;
-    }
-
-    // Parse definition.pbir
-    const pbirFile = defParts.find(f => f.path === "definition.pbir");
-    let semanticModelId = "", semanticModelName = "";
-    if (pbirFile) {
-      try {
-        const pbir = JSON.parse(pbirFile.payload);
-        const connStr = (pbir.datasetReference || {}).byConnection || {};
-        const cs = connStr.connectionString || "";
-        const smIdMatch = cs.match(/semanticmodelid=([a-f0-9-]+)/i);
-        if (smIdMatch) semanticModelId = smIdMatch[1];
-        const catMatch = cs.match(/initial catalog=([^;]+)/i);
-        if (catMatch) semanticModelName = catMatch[1];
-      } catch { /* malformed pbir */ }
-    }
-
-    // Parse report.json
-    const rjFile = defParts.find(f => f.path === "report.json");
-    if (!rjFile) continue;
-    let rjson;
-    try { rjson = JSON.parse(rjFile.payload); } catch { continue; }
-
-    const sections = rjson.sections || [];
-    const allFields = new Set();
-    const allTables = new Set();
-    let totalVisuals = 0;
-    const rptChunks = []; // chunks for this report (to cache)
-
-    for (const sec of sections) {
-      const pageName = sec.displayName || sec.name || "Untitled";
-      const vcs = sec.visualContainers || [];
-      totalVisuals += vcs.length;
-
-      const pageFields = new Set();
-      const visualTypes = {};
-
-      for (const vc of vcs) {
-        let cfg = {};
-        try { cfg = JSON.parse(vc.config || "{}"); } catch { continue; }
-        const sv = cfg.singleVisual || {};
-        const vt = sv.visualType || "unknown";
-        visualTypes[vt] = (visualTypes[vt] || 0) + 1;
-
-        const sourceMap = {};
-        extractFieldRefs(sv.prototypeQuery || {}, sourceMap, pageFields);
-      }
-
-      // Merge into report-level sets
-      for (const f of pageFields) {
-        allFields.add(f);
-        allTables.add(f.split(".")[0]);
-      }
-
-      const pageTables = [...new Set([...pageFields].map(f => f.split(".")[0]))];
-
-      const pageChunk = {
-        type: "report_page",
-        id: `${rpt.name}::${pageName}`,
-        report_name: rpt.name,
-        report_id: rpt.id,
-        workspace: rpt.workspace,
-        page_name: pageName,
-        visual_count: vcs.length,
-        visual_types: visualTypes,
-        tables_used: pageTables,
-        fields_used: [...pageFields].sort(),
-      };
-      rptChunks.push(pageChunk);
-      chunks.push(pageChunk);
-
-      // Populate impact index
-      for (const fld of pageFields) {
-        const tbl = fld.split(".")[0];
-        if (!impactIndex[tbl]) impactIndex[tbl] = [];
-        impactIndex[tbl].push({ report_name: rpt.name, page_name: pageName, field: fld });
-      }
-    }
-
-    // Overview chunk
-    const overviewChunk = {
-      type: "report_overview",
-      id: rpt.name,
-      report_name: rpt.name,
-      report_id: rpt.id,
-      workspace: rpt.workspace,
-      semantic_model_id: semanticModelId,
-      semantic_model_name: semanticModelName,
-      page_count: sections.length,
-      total_visuals: totalVisuals,
-      unique_tables: [...allTables].sort(),
-      unique_fields: [...allFields].sort(),
-    };
-    rptChunks.unshift(overviewChunk);
-    chunks.push(overviewChunk);
-
-    // Cache the chunks for this report
-    cache[cacheKey] = rptChunks;
-
-    log(`  ✓ ${rpt.name}: ${sections.length} pages, ${totalVisuals} visuals, ${allFields.size} fields`);
-  }
-
-  // Generate report_impact chunks (one per table)
-  for (const [table, usages] of Object.entries(impactIndex)) {
-    // Deduplicate
-    const seen = new Set();
-    const deduped = usages.filter(u => {
-      const key = `${u.report_name}|${u.page_name}|${u.field}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-    const reportNames = [...new Set(deduped.map(u => u.report_name))];
-    chunks.push({
-      type: "report_impact",
-      id: `impact::${table}`,
-      table_name: table,
-      used_in_reports: deduped,
-      report_count: reportNames.length,
-      report_names: reportNames,
-      summary: `Table ${table} is used in ${reportNames.length} report(s): ${reportNames.join(", ")}`,
-    });
-  }
-
-  return chunks;
-}
-
 // ── Assemble JSONL ──────────────────────────────────────────
-function assembleJSONL(lineageByTable, chains, warehouseChunks, reportChunks) {
+function assembleJSONL(lineageByTable, chains, warehouseChunks) {
   const lines = [];
 
   // Table lineage chunks
@@ -480,9 +285,6 @@ function assembleJSONL(lineageByTable, chains, warehouseChunks, reportChunks) {
 
   // Warehouse view/sproc chunks
   for (const w of warehouseChunks) lines.push(JSON.stringify(w));
-
-  // Report metadata chunks
-  for (const r of (reportChunks || [])) lines.push(JSON.stringify(r));
 
   return lines.join("\n");
 }
@@ -577,14 +379,9 @@ module.exports = async function (context, req) {
     const warehouseChunks = buildWarehouseLineage(KB);
     log(`Built ${warehouseChunks.length} warehouse chunks.`);
 
-    // 6b. Build report metadata chunks
-    log("Step 5b: Extracting report metadata...");
-    const reportChunks = buildReportChunks(KB, cache, log);
-    log(`Built ${reportChunks.length} report chunks.`);
-
     // 7. Assemble JSONL
     log("Step 6: Assembling JSONL...");
-    const jsonl = assembleJSONL(lineageByTable, chains, warehouseChunks, reportChunks);
+    const jsonl = assembleJSONL(lineageByTable, chains, warehouseChunks);
     const lineCount = jsonl.split("\n").length;
     log(`JSONL: ${lineCount} lines, ${jsonl.length} bytes.`);
 
@@ -609,7 +406,6 @@ module.exports = async function (context, req) {
       lineage_tables: Object.keys(lineageByTable).length,
       execution_chains: chains.length,
       warehouse_chunks: warehouseChunks.length,
-      report_chunks: reportChunks.length,
       jsonl_lines: lineCount,
       jsonl_bytes: jsonl.length,
     };

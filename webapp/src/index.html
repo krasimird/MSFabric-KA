@@ -390,6 +390,7 @@ async function loadData() {
         }).filter(Boolean);
         analysisReady = true;
         buildPipelineIndex();
+        buildReportChunksClientSide();
         progressBar.style.width = '100%';
         analysisStatus.textContent = `✅ Knowledge base loaded — ${KNOWLEDGE.length} chunks`;
         console.log(`Loaded ${KNOWLEDGE.length} JSONL chunks from Blob.`);
@@ -473,6 +474,7 @@ async function startAnalysis() {
 
     analysisReady = true;
     buildPipelineIndex();
+    buildReportChunksClientSide();
     progress.style.width = '100%';
     status.textContent = `✅ Done in ${result.elapsed_seconds}s — ${result.queries_analyzed} analyzed, ${result.queries_cached} cached, ${result.queries_failed || 0} failed. ${KNOWLEDGE.length} chunks.`;
     btn.textContent = '🔄 Re-analyze knowledge base';
@@ -532,6 +534,129 @@ function buildPipelineIndex() {
     }
   }
   console.log(`[PIPELINE_INDEX] Built index with ${Object.keys(PIPELINE_INDEX).length} entries`);
+}
+
+// ── Client-side report chunk generation ──────────────────────
+function buildReportChunksClientSide() {
+  if (!KB || !KB.workspaces || !KB.definitions) return;
+
+  const impactIndex = {};  // table → [{report_name, page_name, field}]
+  let reportCount = 0, chunkCount = 0;
+
+  for (const ws of KB.workspaces) {
+    for (const item of (ws.items || [])) {
+      if (item.type !== 'Report') continue;
+      const defParts = KB.definitions[item.id];
+      if (!defParts || !Array.isArray(defParts)) continue;
+
+      const rptName = item.displayName || item.name || 'Unknown';
+      const wsName = ws.displayName || ws.name || '';
+      reportCount++;
+
+      // Parse definition.pbir → semantic model
+      const pbirFile = defParts.find(f => f.path === 'definition.pbir');
+      let smId = '', smName = '';
+      if (pbirFile) {
+        try {
+          const pbir = JSON.parse(pbirFile.payload);
+          const cs = ((pbir.datasetReference || {}).byConnection || {}).connectionString || '';
+          const mId = cs.match(/semanticmodelid=([a-f0-9-]+)/i);
+          if (mId) smId = mId[1];
+          const mCat = cs.match(/initial catalog=([^;]+)/i);
+          if (mCat) smName = mCat[1];
+        } catch { /* malformed */ }
+      }
+
+      // Parse report.json → pages, visuals, fields
+      const rjFile = defParts.find(f => f.path === 'report.json');
+      if (!rjFile) continue;
+      let rjson;
+      try { rjson = JSON.parse(rjFile.payload); } catch { continue; }
+
+      const sections = rjson.sections || [];
+      const allFields = new Set(), allTables = new Set();
+      let totalVisuals = 0;
+
+      for (const sec of sections) {
+        const pageName = sec.displayName || sec.name || 'Untitled';
+        const vcs = sec.visualContainers || [];
+        totalVisuals += vcs.length;
+        const pageFields = new Set();
+        const visualTypes = {};
+
+        for (const vc of vcs) {
+          let cfg = {};
+          try { cfg = JSON.parse(vc.config || '{}'); } catch { continue; }
+          const sv = cfg.singleVisual || {};
+          const vt = sv.visualType || 'unknown';
+          visualTypes[vt] = (visualTypes[vt] || 0) + 1;
+          // Extract field refs from prototypeQuery
+          const sourceMap = {};
+          _extractFieldRefs(sv.prototypeQuery || {}, sourceMap, pageFields);
+        }
+
+        for (const f of pageFields) { allFields.add(f); allTables.add(f.split('.')[0]); }
+        const pageTables = [...new Set([...pageFields].map(f => f.split('.')[0]))];
+
+        KNOWLEDGE.push({
+          type: 'report_page', id: `${rptName}::${pageName}`,
+          report_name: rptName, report_id: item.id, workspace: wsName,
+          page_name: pageName, visual_count: vcs.length, visual_types: visualTypes,
+          tables_used: pageTables, fields_used: [...pageFields].sort(),
+        });
+        chunkCount++;
+
+        for (const fld of pageFields) {
+          const tbl = fld.split('.')[0];
+          if (!impactIndex[tbl]) impactIndex[tbl] = [];
+          impactIndex[tbl].push({ report_name: rptName, page_name: pageName, field: fld });
+        }
+      }
+
+      KNOWLEDGE.push({
+        type: 'report_overview', id: rptName,
+        report_name: rptName, report_id: item.id, workspace: wsName,
+        semantic_model_id: smId, semantic_model_name: smName,
+        page_count: sections.length, total_visuals: totalVisuals,
+        unique_tables: [...allTables].sort(), unique_fields: [...allFields].sort(),
+      });
+      chunkCount++;
+    }
+  }
+
+  // Generate report_impact chunks (one per table)
+  for (const [table, usages] of Object.entries(impactIndex)) {
+    const seen = new Set();
+    const deduped = usages.filter(u => {
+      const key = `${u.report_name}|${u.page_name}|${u.field}`;
+      if (seen.has(key)) return false; seen.add(key); return true;
+    });
+    const reportNames = [...new Set(deduped.map(u => u.report_name))];
+    KNOWLEDGE.push({
+      type: 'report_impact', id: `impact::${table}`, table_name: table,
+      used_in_reports: deduped, report_count: reportNames.length, report_names: reportNames,
+      summary: `Table ${table} is used in ${reportNames.length} report(s): ${reportNames.join(', ')}`,
+    });
+    chunkCount++;
+  }
+
+  console.log(`[REPORT_CHUNKS] Built ${chunkCount} report chunks from ${reportCount} reports`);
+}
+
+// Helper: recursively extract table.column refs from Power BI prototypeQuery AST
+function _extractFieldRefs(node, sourceMap, out) {
+  if (!node || typeof node !== 'object') return;
+  if (Array.isArray(node)) { node.forEach(n => _extractFieldRefs(n, sourceMap, out)); return; }
+  if (Array.isArray(node.From)) {
+    for (const f of node.From) { if (f.Name && f.Entity) sourceMap[f.Name] = f.Entity; }
+  }
+  if (node.Property && node.Expression) {
+    const sr = node.Expression.SourceRef || {};
+    const alias = sr.Source || sr.Entity || '';
+    const entity = sourceMap[alias] || alias;
+    if (entity) out.add(`${entity}.${node.Property}`);
+  }
+  for (const v of Object.values(node)) _extractFieldRefs(v, sourceMap, out);
 }
 
 // ── Chain-aware lineage following ────────────────────────────
