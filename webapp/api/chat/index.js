@@ -14,7 +14,8 @@ const { SecretClient } = require("@azure/keyvault-secrets");
 
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
 const MODEL = "claude-sonnet-4-20250514";
-const MAX_TOKENS = 4096;
+const DEFAULT_MAX_TOKENS = 4096;
+const MAX_ALLOWED_TOKENS = 16384;
 
 const KV_URL = "https://kv-ai-site-builder.vault.azure.net";
 const KV_SECRET_NAME = "anthropicapikey";
@@ -52,11 +53,17 @@ module.exports = async function (context, req) {
     return;
   }
 
-  const { messages, system } = req.body || {};
+  const { messages, system, max_tokens } = req.body || {};
   if (!messages || !Array.isArray(messages)) {
     context.res = { status: 400, body: { error: "Request body must include a 'messages' array." } };
     return;
   }
+
+  // Allow client to request more tokens (capped at MAX_ALLOWED_TOKENS)
+  const tokensToUse = Math.min(
+    Math.max(parseInt(max_tokens, 10) || DEFAULT_MAX_TOKENS, 256),
+    MAX_ALLOWED_TOKENS
+  );
 
   try {
     const response = await fetch(ANTHROPIC_API_URL, {
@@ -68,7 +75,7 @@ module.exports = async function (context, req) {
       },
       body: JSON.stringify({
         model: MODEL,
-        max_tokens: MAX_TOKENS,
+        max_tokens: tokensToUse,
         ...(system ? { system } : {}),
         messages,
       }),
