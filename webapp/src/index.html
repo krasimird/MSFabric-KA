@@ -773,7 +773,9 @@ function buildSemanticModelChunks() {
     }
   }
 
+  const modelNames = KNOWLEDGE.filter(c => c.type === 'semantic_model_overview').map(c => c.model_name);
   console.log(`[SM_CHUNKS] Built ${chunkCount} semantic model chunks from ${modelCount} models`);
+  console.log(`[SM_CHUNKS] Models: ${modelNames.join(', ')}`);
 }
 
 // ── Chain-aware lineage following ────────────────────────────
@@ -1270,9 +1272,28 @@ async function retrieveContext(query) {
       }
       return 0;
     });
-    // Budget: lineage queries get 20k to ensure Bronze completeness; warehouse/pipeline/report 16k; default 12k
-    let ctx = '', budget = isLineageQuery ? 20000 : isWarehouseQuery ? 16000 : isPipelineQuery ? 16000 : (isReportQuery || isImpactQuery) ? 16000 : 12000;
+    // Budget: lineage queries get 20k to ensure Bronze completeness; warehouse/pipeline/report/SM 16k; default 12k
+    let ctx = '', budget = isLineageQuery ? 20000 : isWarehouseQuery ? 16000 : isPipelineQuery ? 16000 : (isReportQuery || isImpactQuery) ? 16000 : isSemanticModelQuery ? 16000 : 12000;
+
+    // For semantic model queries: always prepend ALL overview chunks so the LLM sees every model
+    if (isSemanticModelQuery) {
+      const overviews = KNOWLEDGE.filter(c => c.type === 'semantic_model_overview');
+      for (const ov of overviews) {
+        const ovText = ov.text || `Semantic Model: ${ov.model_name}`;
+        ctx += ovText + '\n---\n';
+      }
+      // Remove overview chunks from scored list to avoid duplicates
+      const overviewIds = new Set(overviews.map(o => o.id));
+      for (let i = chunks.length - 1; i >= 0; i--) {
+        if (chunks[i].type === 'semantic_model_overview' && overviewIds.has(chunks[i]._raw?.id)) {
+          chunks[i]._included = true; // mark so debug log counts them
+        }
+      }
+      console.log(`[RAG] Prepended ${overviews.length} SM overview chunks (${ctx.length} chars)`);
+    }
+
     for (const c of chunks) {
+      if (c._included) continue; // skip already-prepended SM overviews
       if (ctx.length + c.text.length > budget) { if (ctx.length > 0) break; }
       ctx += c.text + '\n---\n';
       c._included = true;
