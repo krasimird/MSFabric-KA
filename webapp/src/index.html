@@ -459,7 +459,9 @@ async function startAnalysis() {
   try {
     // Trigger server-side analysis via /api/analyze
     const resp = await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-    const result = await resp.json();
+    const text = await resp.text();
+    let result;
+    try { result = JSON.parse(text); } catch { result = { error: text || `HTTP ${resp.status}` }; }
 
     if (!resp.ok) throw new Error(result.error || `HTTP ${resp.status}`);
 
