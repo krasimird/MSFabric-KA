@@ -976,9 +976,15 @@ async function retrieveContext(query) {
         } else if (chunk.type === 'report_overview') {
           text = `Report Overview: ${chunk.report_name}\nWorkspace: ${chunk.workspace||''}\nSemantic Model: ${chunk.semantic_model_name||chunk.semantic_model_id||'?'}\nPages: ${chunk.page_count||0}, Visuals: ${chunk.total_visuals||0}\nTables used: ${(chunk.unique_tables||[]).join(', ')}\nFields: ${(chunk.unique_fields||[]).join(', ')}`;
           score += 6 + reportBoost;
+          // Direct report_name match: if query contains exact report name, massive boost
+          const rptLower = (chunk.report_name||'').toLowerCase();
+          if (rptLower && compoundTokens.some(t => t === rptLower || rptLower.includes(t))) score += 25;
         } else if (chunk.type === 'report_page') {
           text = `Report Page: ${chunk.report_name} → ${chunk.page_name}\nVisuals: ${chunk.visual_count||0} (${Object.entries(chunk.visual_types||{}).map(([k,v])=>`${k}:${v}`).join(', ')})\nTables: ${(chunk.tables_used||[]).join(', ')}\nFields: ${(chunk.fields_used||[]).join(', ')}`;
           score += 5 + reportBoost;
+          // Direct report_name match
+          const rptLower2 = (chunk.report_name||'').toLowerCase();
+          if (rptLower2 && compoundTokens.some(t => t === rptLower2 || rptLower2.includes(t))) score += 25;
         } else if (chunk.type === 'report_impact') {
           text = `Impact Analysis: table "${chunk.table_name}" is used in ${chunk.report_count||0} report(s): ${(chunk.report_names||[]).join(', ')}\nDetails: ${(chunk.used_in_reports||[]).slice(0,30).map(u=>`${u.report_name}/${u.page_name}: ${u.field}`).join('; ')}`;
           score += 4 + reportBoost + impactBoost;
@@ -986,6 +992,9 @@ async function retrieveContext(query) {
           const tblLower = (chunk.table_name||'').toLowerCase();
           if (compoundTokens.some(t => tblLower.includes(t) || t.includes(tblLower))) score += 12;
           if (splitTokens.some(t => tblLower.includes(t))) score += 3;
+          // Direct report_name match in impact's report_names list
+          const impRptNames = (chunk.report_names||[]).map(n => n.toLowerCase());
+          if (compoundTokens.some(t => impRptNames.some(n => n === t || n.includes(t)))) score += 20;
         } else {
           text = `${chunk.type}: ${chunk.id}\n${JSON.stringify(chunk).slice(0, 500)}`;
         }
@@ -995,6 +1004,11 @@ async function retrieveContext(query) {
       const matched = {};
       for (const c of chunks) matched[c.type] = (matched[c.type]||0) + 1;
       console.log(`[RAG] Matched chunks: ${chunks.length}`, JSON.stringify(matched));
+      // Debug: specifically log report chunks
+      const rptChunks = chunks.filter(c => ['report_overview','report_page','report_impact'].includes(c.type));
+      if (rptChunks.length > 0) {
+        console.log(`[RAG] Report chunks matched: ${rptChunks.length}`, rptChunks.slice(0,5).map(c => `${c.type} score=${c.score} ${(c._raw?.report_name||c._raw?.table_name||'').slice(0,40)}`));
+      }
       if (chunks.length > 0) {
         chunks.sort((a,b) => b.score - a.score);
         console.log(`[RAG] Top 5:`, chunks.slice(0,5).map(c => `${c.type} score=${c.score} ${c.text.slice(0,80)}`));
@@ -1014,6 +1028,8 @@ async function retrieveContext(query) {
     if (KB.workspaces) for (const ws of KB.workspaces) {
       const wsName = ws.displayName || ws.name || ws.id;
       for (const item of (ws.items || [])) {
+        // Skip Report items — they are already covered by richer KNOWLEDGE report chunks
+        if (item.type === 'Report') continue;
         const itemName = item.displayName || item.name || item.id;
         const blob = (JSON.stringify(item) + ' ' + itemName).toLowerCase();
         let score = 0;
