@@ -121,12 +121,50 @@
     .send-btn:hover { background: var(--teal-dark); }
     .send-btn:disabled { opacity: .5; cursor: not-allowed; }
 
+    /* ── Help Modal ─────────────────────────────────────────── */
+    .help-overlay {
+      display: none; position: fixed; inset: 0; z-index: 200;
+      background: rgba(0,0,0,.45); justify-content: center; align-items: center;
+    }
+    .help-overlay.open { display: flex; }
+    .help-modal {
+      background: var(--surface); border-radius: 12px; width: 90%; max-width: 720px;
+      max-height: 85vh; display: flex; flex-direction: column; box-shadow: 0 8px 32px rgba(0,0,0,.2);
+    }
+    .help-modal-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 16px 20px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+    }
+    .help-modal-header h2 { font-size: 16px; color: var(--teal); margin: 0; }
+    .help-modal-close {
+      background: none; border: none; font-size: 22px; cursor: pointer;
+      color: var(--text-muted); padding: 4px 8px; border-radius: 4px;
+    }
+    .help-modal-close:hover { background: var(--border); color: var(--text); }
+    .help-modal-body {
+      padding: 20px 24px; overflow-y: auto; flex: 1; font-size: 14px; line-height: 1.7;
+    }
+    .help-modal-body h1 { font-size: 20px; color: var(--teal); margin: 0 0 12px; }
+    .help-modal-body h2 { font-size: 16px; color: var(--teal-dark); margin: 20px 0 8px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+    .help-modal-body h3 { font-size: 14px; color: var(--text); margin: 16px 0 6px; }
+    .help-modal-body p { margin-bottom: 8px; }
+    .help-modal-body ul, .help-modal-body ol { margin: 4px 0 8px 20px; }
+    .help-modal-body li { margin-bottom: 4px; }
+    .help-modal-body code { background: #f0f0f0; padding: 1px 5px; border-radius: 3px; font-family: 'Cascadia Code', Consolas, monospace; font-size: 13px; }
+    .help-modal-body pre { background: #f6f6f6; padding: 10px 12px; border-radius: 6px; overflow-x: auto; font-size: 13px; margin: 8px 0; }
+    .help-modal-body pre code { background: none; padding: 0; }
+    .help-modal-body table { border-collapse: collapse; margin: 8px 0; font-size: 13px; width: 100%; }
+    .help-modal-body th, .help-modal-body td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; }
+    .help-modal-body th { background: var(--teal-light); font-weight: 600; }
+    .help-modal-body blockquote { border-left: 3px solid var(--teal); margin: 8px 0; padding: 4px 12px; color: var(--text-muted); background: var(--teal-light); border-radius: 0 6px 6px 0; }
+
     /* ── Mobile ───────────────────────────────────────────────── */
     @media (max-width: 768px) {
       .sidebar { position: fixed; left: -300px; top: 0; bottom: 0; z-index: 100; transition: left .25s; box-shadow: 2px 0 12px rgba(0,0,0,.15); }
       .sidebar.open { left: 0; }
       .menu-toggle { display: block; }
       .message { max-width: 95%; }
+      .help-modal { width: 96%; max-height: 90vh; }
     }
   </style>
 </head>
@@ -158,8 +196,25 @@
       <div class="analysis-status" id="analysisStatus">Ready</div>
       <button class="analysis-btn" id="analyzeBtn" onclick="startAnalysis()">Analyze SQL Queries</button>
     </div>
+    <div class="sidebar-section">
+      <h3>📖 Help & Docs</h3>
+      <button class="quick-btn" onclick="openHelpDoc('onboarding_guide.md', '📖 Onboarding Guide')">📖 Onboarding Guide</button>
+      <button class="quick-btn" onclick="openHelpDoc('export_update_process.md', '🔄 Export Update Process')">🔄 Export Update Process</button>
+      <button class="quick-btn" onclick="openHelpDoc('monitoring.md', '📊 Monitoring & Costs')">📊 Monitoring & Costs</button>
+    </div>
     <div class="data-status" id="dataStatus"><span class="dot dot-loading"></span> Loading data…</div>
   </aside>
+
+  <!-- Help Modal -->
+  <div class="help-overlay" id="helpOverlay">
+    <div class="help-modal">
+      <div class="help-modal-header">
+        <h2 id="helpModalTitle">Help</h2>
+        <button class="help-modal-close" onclick="closeHelpDoc()" title="Close">✕</button>
+      </div>
+      <div class="help-modal-body" id="helpModalBody">Loading…</div>
+    </div>
+  </div>
 
   <!-- Main -->
   <div class="main">
@@ -1866,6 +1921,44 @@ document.querySelectorAll('.quick-btn').forEach(btn => {
 // Mobile sidebar toggle
 menuToggle.addEventListener('click', () => sidebar.classList.toggle('open'));
 chatArea.addEventListener('click', () => sidebar.classList.remove('open'));
+
+// ── Help/Docs modal ──────────────────────────────────────────────
+const DOCS_BASE_URL = 'https://sainspiritka.blob.core.windows.net/gendwh-exports/docs/';
+const helpOverlay = document.getElementById('helpOverlay');
+const helpModalTitle = document.getElementById('helpModalTitle');
+const helpModalBody = document.getElementById('helpModalBody');
+
+async function openHelpDoc(filename, title) {
+  helpModalTitle.textContent = title || 'Help';
+  helpModalBody.innerHTML = '<p style="color:var(--text-muted)">Loading documentation…</p>';
+  helpOverlay.classList.add('open');
+  try {
+    // Try Blob Storage first, fall back to local docs/ folder
+    let resp = await fetch(DOCS_BASE_URL + filename);
+    if (!resp.ok) {
+      resp = await fetch('docs/' + filename);
+    }
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const md = await resp.text();
+    helpModalBody.innerHTML = marked.parse(md);
+  } catch (err) {
+    helpModalBody.innerHTML = `<p style="color:#d13438">Failed to load documentation: ${err.message}</p>`;
+  }
+}
+
+function closeHelpDoc() {
+  helpOverlay.classList.remove('open');
+}
+
+// Close modal on overlay click (outside the modal)
+helpOverlay.addEventListener('click', (e) => {
+  if (e.target === helpOverlay) closeHelpDoc();
+});
+
+// Close modal on Escape key
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && helpOverlay.classList.contains('open')) closeHelpDoc();
+});
 
 // ── Init ───────────────────────────────────────────────────────
 loadData();
