@@ -212,13 +212,17 @@ print("✓ Discovery function loaded")
 # CELL 3 ── Definition Extraction ───
 
 def extract_definitions(workspaces, token):
-    """Call getDefinition for EVERY item, skipping types that return 400 on first attempt."""
+    """Call getDefinition for EVERY item, silently skipping known-unsupported types."""
     print("\n" + "═" * 60)
     print("STEP 2 — DEFINITION EXTRACTION")
     print("═" * 60)
 
+    # Types that are known to return 400 (getDefinition not supported)
+    KNOWN_UNSUPPORTED = {"SQLEndpoint", "Dashboard", "Warehouse", "PaginatedReport"}
+
     results = {}          # item_id -> definition parts or error dict
-    unsupported = set()   # item types that returned 400 (not supported)
+    unsupported = set(KNOWN_UNSUPPORTED)  # start with known; may grow at runtime
+    skipped_counts = {}   # {type: count} for silently skipped items
     # Per-type counters: {type: {"ok": N, "fail": N, "skip": N}}
     stats = {}
 
@@ -239,9 +243,10 @@ def extract_definitions(workspaces, token):
         item_type = item["type"]
         label = f"{item['displayName']} ({item_type})"
 
-        # Skip types we already know don't support getDefinition
+        # Silently skip types we know don't support getDefinition
         if item_type in unsupported:
             bump(item_type, "skip")
+            skipped_counts[item_type] = skipped_counts.get(item_type, 0) + 1
             results[item_id] = {"error": "type unsupported", "item_type": item_type}
             continue
 
@@ -281,14 +286,12 @@ def extract_definitions(workspaces, token):
 
         except requests.exceptions.HTTPError as e:
             if e.response is not None and e.response.status_code == 400:
+                # Newly discovered unsupported type — mark and skip future items
                 unsupported.add(item_type)
-                remaining = sum(1 for _, i in work if i["type"] == item_type) - (
-                    stats.get(item_type, {}).get("ok", 0)
-                    + stats.get(item_type, {}).get("fail", 0)
-                    + 1  # this one
-                )
                 bump(item_type, "fail")
-                print(f"  ⚠ {label}: 400 — marking {item_type} unsupported, skipping {remaining} remaining")
+                skipped_counts[item_type] = skipped_counts.get(item_type, 0) + 1
+                if item_type not in KNOWN_UNSUPPORTED:
+                    print(f"  ⚠ {label}: 400 — marking {item_type} unsupported")
             else:
                 bump(item_type, "fail")
                 print(f"  ⚠ {label}: {e}")
@@ -298,6 +301,12 @@ def extract_definitions(workspaces, token):
             bump(item_type, "fail")
             print(f"  ⚠ {label}: {e}")
             results[item_id] = {"error": str(e), "item_type": item_type}
+
+    # Single summary line for silently skipped items
+    if skipped_counts:
+        total_skipped = sum(skipped_counts.values())
+        breakdown = ", ".join(f"{t}×{n}" for t, n in sorted(skipped_counts.items()))
+        print(f"\n  Skipped {total_skipped} unsupported items ({breakdown})")
 
     # Summary table
     total_ok = sum(s["ok"] for s in stats.values())
