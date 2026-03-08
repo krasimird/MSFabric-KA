@@ -5,7 +5,8 @@
 1. Open **Microsoft Fabric** → navigate to the target workspace (`GenDWH_Administration_UWS_D`).
 2. Click **+ New** → **Data Pipeline** → name it `GenDWH_KA_Extraction_DP`.
 3. In the pipeline editor, switch to **JSON view** (code icon `</>` in the toolbar).
-4. Replace the contents with the JSON from `notebooks/GenDWH_KA_Extraction_DP.json`.
+4. Fabric shows a read-only structure like `{ "name": "...", "objectId": "...", "properties": { "activities": [] } }`.
+   **Do NOT replace the entire JSON.** Only replace the empty `"activities": []` array with the contents of `notebooks/GenDWH_KA_Extraction_DP.json`.
 5. Click **Validate** to ensure there are no errors.
 6. Click **Save**.
 
