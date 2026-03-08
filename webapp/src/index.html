@@ -823,10 +823,21 @@ function collectTablesForExcel() {
   }
 
   // Platinum from warehouse_sproc/warehouse_view chunks
+  // Build warehouse_id → name mapping from KB workspace items
+  const whNameMap = {};
+  if (KB?.workspaces) {
+    for (const ws of KB.workspaces) {
+      for (const item of (ws.items || [])) {
+        if (item.type === 'Warehouse') whNameMap[item.id] = item.displayName || item.id;
+      }
+    }
+  }
   for (const chunk of KNOWLEDGE) {
     if (chunk.type === 'warehouse_sproc' || chunk.type === 'warehouse_view') {
+      const whName = chunk.warehouse_name || whNameMap[chunk.warehouse_id] || '';
+      const prefix = whName ? `${whName}.` : '';
       zones.Platinum.push({
-        name: `${chunk.schema||'dbo'}.${chunk.name}`,
+        name: `${prefix}${chunk.schema||'dbo'}.${chunk.name}`,
         source: chunk.type === 'warehouse_sproc' ? 'Stored Procedure' : 'View',
         fieldCount: 0,
         definition: chunk.definition || '',

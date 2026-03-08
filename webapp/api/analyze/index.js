@@ -197,14 +197,25 @@ function buildExecutionChains(KB) {
 function buildWarehouseLineage(KB) {
   const chunks = [];
   if (!KB.schemas) return chunks;
+  // Build warehouse_id → name mapping
+  const whNameMap = {};
+  if (KB.workspaces) {
+    for (const ws of KB.workspaces) {
+      for (const item of (ws.items || [])) {
+        if (item.type === 'Warehouse') whNameMap[item.id] = item.displayName || item.id;
+      }
+    }
+  }
   for (const [itemId, val] of Object.entries(KB.schemas)) {
     if (!val || Array.isArray(val) || !val.item_type) continue;
+    const warehouseName = whNameMap[itemId] || '';
     // Views
     for (const vw of (val.views || [])) {
       chunks.push({
         type: "warehouse_view",
         id: `${vw.schema || "dbo"}.${vw.name}`,
         warehouse_id: itemId,
+        warehouse_name: warehouseName,
         schema: vw.schema || "dbo",
         name: vw.name,
         definition: (vw.definition || "").slice(0, 4000),
@@ -216,6 +227,7 @@ function buildWarehouseLineage(KB) {
         type: "warehouse_sproc",
         id: `${sp.schema || "dbo"}.${sp.name}`,
         warehouse_id: itemId,
+        warehouse_name: warehouseName,
         schema: sp.schema || "dbo",
         name: sp.name,
         definition: (sp.definition || "").slice(0, 4000),
