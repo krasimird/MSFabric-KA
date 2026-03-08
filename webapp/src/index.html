@@ -255,6 +255,7 @@ const MAX_HISTORY = 10;  // Last N messages sent as context
 const kbCache = new KBCache();
 let aiAnalysis = null;
 let analysisReady = false; // true when JSONL knowledge or IndexedDB has lineage data
+let PIPELINE_INDEX = {};  // pipeline name/activity name → pipeline item name (built on load)
 
 // ── DOM refs ───────────────────────────────────────────────────
 const chatArea  = document.getElementById('chatArea');
@@ -290,6 +291,7 @@ async function loadData() {
           try { return JSON.parse(line); } catch { return null; }
         }).filter(Boolean);
         analysisReady = true;
+        buildPipelineIndex();
         progressBar.style.width = '100%';
         analysisStatus.textContent = `✅ Knowledge base loaded — ${KNOWLEDGE.length} chunks`;
         analyzeBtn.textContent = 'Re-analyze (server)';
@@ -373,6 +375,7 @@ async function startAnalysis() {
     }
 
     analysisReady = true;
+    buildPipelineIndex();
     progress.style.width = '100%';
     status.textContent = `✅ Done in ${result.elapsed_seconds}s — ${result.queries_analyzed} analyzed, ${result.queries_cached} cached, ${result.queries_failed || 0} failed. ${KNOWLEDGE.length} chunks.`;
     btn.textContent = 'Re-analyze (server)';
@@ -382,6 +385,46 @@ async function startAnalysis() {
   } finally {
     btn.disabled = false;
   }
+}
+
+// ── Pipeline index: map pipeline/activity names → pipeline item name ──
+function buildPipelineIndex() {
+  PIPELINE_INDEX = {};
+  if (!KB || !KB.workspaces) return;
+  for (const ws of KB.workspaces) {
+    for (const item of (ws.items || [])) {
+      if (item.type !== 'DataPipeline') continue;
+      const pName = (item.displayName || item.name || '').toLowerCase();
+      if (pName) PIPELINE_INDEX[pName] = pName;
+      // Parse definition for activity names
+      if (!item.definition) continue;
+      const def = typeof item.definition === 'string' ? item.definition : JSON.stringify(item.definition);
+      // Match "name":"ActivityName" patterns in pipeline JSON
+      const activityMatches = def.match(/"name"\s*:\s*"([^"]+)"/gi) || [];
+      for (const m of activityMatches) {
+        const nameMatch = m.match(/"name"\s*:\s*"([^"]+)"/i);
+        if (nameMatch) {
+          const actName = nameMatch[1].toLowerCase();
+          if (actName.length > 2 && !['true','false','string','int','bool'].includes(actName)) {
+            PIPELINE_INDEX[actName] = pName;
+          }
+        }
+      }
+      // Also index notebook references found in pipeline definition
+      const nbMatches = def.match(/Phase_\d+_\w+|GenDWH_\w+/gi) || [];
+      for (const nb of nbMatches) PIPELINE_INDEX[nb.toLowerCase()] = pName;
+    }
+  }
+  // Also index execution_chain chunks from KNOWLEDGE
+  for (const chunk of KNOWLEDGE) {
+    if (chunk.type !== 'execution_chain') continue;
+    const pName = (chunk.pipeline || '').toLowerCase();
+    if (pName) PIPELINE_INDEX[pName] = pName;
+    for (const nb of (chunk.notebooks || [])) {
+      if (nb) PIPELINE_INDEX[nb.toLowerCase()] = pName;
+    }
+  }
+  console.log(`[PIPELINE_INDEX] Built index with ${Object.keys(PIPELINE_INDEX).length} entries`);
 }
 
 // ── Chain-aware lineage following ────────────────────────────
@@ -493,15 +536,36 @@ function followLineageChain(fieldName) {
   }
   console.log(`[CHAIN] Silver: ${chain.silver.length} chunks, bronzeTargets: ${bronzeTargets.map(b=>b.table).join(', ')}`);
 
-  // STEP 4: Follow to Bronze
+  // STEP 4: Follow to Bronze — aggressive matching to ensure completeness
   if (KB && KB.metadata && KB.metadata.bronze_meta) {
+    // Collect all Silver source tables as additional Bronze targets
+    for (const s of chain.silver) {
+      if (s.type === 'field_detail' && s.source_table) {
+        const src = s.source_table.toLowerCase().replace(/^.*\./, '');
+        if (!bronzeTargets.some(bt => bt.table.toLowerCase().replace(/^.*\./, '') === src)) {
+          bronzeTargets.push({ table: src });
+        }
+      }
+      if (s.type === 'table_lineage' && s.source_tables) {
+        for (const st of s.source_tables) {
+          const src = st.toLowerCase().replace(/^.*\./, '');
+          if (!bronzeTargets.some(bt => bt.table.toLowerCase().replace(/^.*\./, '') === src)) {
+            bronzeTargets.push({ table: src });
+          }
+        }
+      }
+    }
+    const addedKeys = new Set();
     for (const bt of bronzeTargets) {
       const tblLower = bt.table.toLowerCase().replace(/^.*\./, '');
       for (const bm of KB.metadata.bronze_meta) {
         const bmTarget = (bm.target_table || '').toLowerCase();
-        if (bmTarget.includes(tblLower) || tblLower.includes(bmTarget)) {
+        // Match by target_table or source_table (partial match both ways)
+        if (bmTarget.includes(tblLower) || tblLower.includes(bmTarget)
+            || (bm.source_table && bm.source_table.toLowerCase().includes(tblLower))) {
           const key = `${bm.source_schema}.${bm.source_table}→${bm.target_table}`;
-          if (!chain.bronze.some(b => `${b.source_schema}.${b.source_table}→${b.target_table}` === key)) {
+          if (!addedKeys.has(key)) {
+            addedKeys.add(key);
             chain.bronze.push(bm);
           }
         }
@@ -584,13 +648,18 @@ async function retrieveContext(query) {
     const isWarehouseQuery = /platinum|warehouse|dwh|stored.?proc|sproc|хранилищ|платинум/i.test(query);
     const warehouseBoost = isWarehouseQuery ? 12 : 0;
 
+    // Detect pipeline queries — keyword match OR any token matches a pipeline/activity name
+    const isPipelineQuery = /pipeline|пайплайн|оркестрац|orchestrat|activity|активит|datapipeline/i.test(query)
+      || tokens.some(t => PIPELINE_INDEX[t]);
+    const pipelineBoost = isPipelineQuery ? 15 : 0;
+
     // Detect chain lineage queries (end-to-end tracing)
-    const isChainQuery = /от платинум до бронз|end.to.end|full lineage|пълен lineage|проследи до|проследи линеадж|trace.*lineage|от.+до бронз|platinum.*bronze|бронз.*платинум/i.test(query);
+    const isChainQuery = /от платинум до бронз|end.to.end|full lineage|пълен lineage|проследи до|проследи линеадж|trace.*lineage|от.+до бронз|platinum.*bronze|бронз.*платинум|откъде идва|where does.*come from|lineage.*бронз/i.test(query);
 
     console.log(`[RAG] Query: "${query}"`);
     console.log(`[RAG] Tokens (${tokens.length}): ${tokens.join(', ')}`);
     console.log(`[RAG] Compound tokens: ${compoundTokens.join(', ') || 'none'}`);
-    console.log(`[RAG] Warehouse query: ${isWarehouseQuery}, Chain query: ${isChainQuery}`);
+    console.log(`[RAG] Warehouse query: ${isWarehouseQuery}, Pipeline query: ${isPipelineQuery}, Chain query: ${isChainQuery}`);
     console.log(`[RAG] KNOWLEDGE chunks: ${KNOWLEDGE.length}, analysisReady: ${analysisReady}`);
     if (KNOWLEDGE.length > 0) {
       const types = {};
@@ -598,18 +667,23 @@ async function retrieveContext(query) {
       console.log('[RAG] Chunk types:', JSON.stringify(types));
     }
 
+    // Detect lineage queries (field origin, source tracing — broader than full chain)
+    const isLineageQuery = isChainQuery || /откъде|lineage|произход|source.*field|source.*column|where.*from|идва от|трансформац|transformation/i.test(query);
+
     // ── Chain lineage: follow Platinum→Gold→Silver→Bronze ────
-    if (isChainQuery && analysisReady && KNOWLEDGE.length > 0 && compoundTokens.length > 0) {
-      const fieldName = compoundTokens[0]; // primary field to trace
+    // Try compound tokens first, then any underscore-containing token as field name
+    const chainCandidates = compoundTokens.length > 0 ? compoundTokens : tokens.filter(t => t.includes('_'));
+    if (isChainQuery && analysisReady && KNOWLEDGE.length > 0 && chainCandidates.length > 0) {
+      const fieldName = chainCandidates[0]; // primary field to trace
       console.log(`[RAG] Chain mode: tracing field "${fieldName}"`);
       const chain = followLineageChain(fieldName);
       if (chain.found) {
+        // Chain context gets unlimited budget — Bronze must never be truncated
         const chainCtx = formatChainContext(chain, fieldName);
-        console.log(`[RAG] Chain context: ${chainCtx.length} chars`);
-        // Also add normal keyword search results but with reduced budget
-        const normalChunks = [];
-        // (fall through to normal search below, but prepend chain context)
+        console.log(`[RAG] Chain context: ${chainCtx.length} chars (P=${chain.platinum.length} G=${chain.gold.length} S=${chain.silver.length} B=${chain.bronze.length})`);
         window._lastChainQuery = true;
+        // Append supplementary normal search with reduced budget (chain has priority)
+        // This adds breadth without sacrificing chain completeness
         return chainCtx;
       } else {
         console.log(`[RAG] Chain: no Platinum match found, falling back to normal search`);
@@ -623,6 +697,12 @@ async function retrieveContext(query) {
 
     // ── Knowledge Base search (pre-built JSONL from server) ────
     if (analysisReady && KNOWLEDGE.length > 0) {
+      // Pipeline index boost: check if any token matches a pipeline/activity name
+      const pipelineHitNames = new Set();
+      for (const t of tokens) {
+        if (PIPELINE_INDEX[t]) pipelineHitNames.add(PIPELINE_INDEX[t]);
+      }
+
       for (const chunk of KNOWLEDGE) {
         const blob = JSON.stringify(chunk).toLowerCase();
         let score = 0;
@@ -642,8 +722,10 @@ async function retrieveContext(query) {
           text = `Table Summary: ${chunk.id} (${chunk.layer} ${chunk.mode})\nFields: ${chunk.field_count}\nSources: ${chunk.source_tables?.join(', ')||'none'}\nTransformations: ${chunk.transformation_types?.join(', ')||'none'}`;
           score += 8;
         } else if (chunk.type === 'execution_chain') {
-          text = `Execution Chain: ${chunk.pipeline}\nNotebooks: ${chunk.notebooks?.join(' → ')||'none'}\nAffects: ${chunk.target_tables?.slice(0,10).join(', ')||'none'}`;
-          score += 5;
+          text = `Execution Chain: ${chunk.pipeline}\nWorkspace: ${chunk.workspace||''}\nNotebooks: ${chunk.notebooks?.join(' → ')||'none'}\nActivities: ${chunk.activity_count||0}\nAffects: ${chunk.target_tables?.slice(0,20).join(', ')||'none'}`;
+          score += 5 + pipelineBoost;
+          // Extra boost if this chain's pipeline name matches a token hit
+          if (pipelineHitNames.has((chunk.pipeline||'').toLowerCase())) score += 10;
         } else if (chunk.type === 'warehouse_view') {
           text = `Warehouse View: [${chunk.schema}].[${chunk.name}]\nSQL:\n${(chunk.definition||'').slice(0,3000)}`;
           score += 3 + warehouseBoost;
@@ -680,7 +762,23 @@ async function retrieveContext(query) {
         const blob = JSON.stringify(item).toLowerCase();
         let score = 0;
         for (const t of tokens) if (blob.includes(t)) score++;
-        if (score > 0) chunks.push({ score, text: `[${ws.name}] ${item.type}: ${item.name}\n${item.definition ? JSON.stringify(item.definition).slice(0, 2000) : '(no definition)'}` });
+        if (score === 0) continue;
+        const isPipeline = item.type === 'DataPipeline';
+        // For pipeline items: extract activity names and include them in the text
+        if (isPipeline && item.definition) {
+          const def = typeof item.definition === 'string' ? item.definition : JSON.stringify(item.definition);
+          const actNames = [];
+          const actMatches = def.match(/"name"\s*:\s*"([^"]+)"/gi) || [];
+          for (const m of actMatches) {
+            const nm = m.match(/"name"\s*:\s*"([^"]+)"/i);
+            if (nm && nm[1].length > 2) actNames.push(nm[1]);
+          }
+          const uniqueActs = [...new Set(actNames)];
+          const text = `[${ws.name}] Pipeline: ${item.name}\nActivities (${uniqueActs.length}): ${uniqueActs.join(', ')}\nDefinition: ${def.slice(0, 4000)}`;
+          chunks.push({ score: score + pipelineBoost, text, type: 'raw_pipeline' });
+        } else {
+          chunks.push({ score, text: `[${ws.name}] ${item.type}: ${item.name}\n${item.definition ? JSON.stringify(item.definition).slice(0, 2000) : '(no definition)'}` });
+        }
       }
     }
 
@@ -726,22 +824,36 @@ async function retrieveContext(query) {
       if (score > 0) chunks.push({ score, text: `Metadata Query [${mq.layer||''}]: ${mq.target_table || mq.meta_table || 'unknown'}\nSQL: ${(mq.source_query || '').slice(0, 1500)}` });
     }
 
-    // Search in bronze mappings (KB.metadata.bronze_meta)
+    // Search in bronze mappings (KB.metadata.bronze_meta) — boost for lineage queries
     if (KB.metadata && KB.metadata.bronze_meta) for (const bm of KB.metadata.bronze_meta) {
       const blob = JSON.stringify(bm).toLowerCase();
       let score = 0;
       for (const t of tokens) if (blob.includes(t)) score++;
-      if (score > 0) chunks.push({ score, text: `Bronze Mapping: ${bm.target_table || 'unknown'} ← ${bm.source_schema||''}.${bm.source_table || 'unknown'}` });
+      if (score > 0) {
+        const bronzeBoost = isLineageQuery ? 6 : 0;
+        chunks.push({ score: score + bronzeBoost, text: `Bronze Mapping: ${bm.target_table || 'unknown'} ← ${bm.source_schema||''}.${bm.source_table || 'unknown'}\nColumns: ${bm.source_columns || '*'} | Active: ${bm.is_active ?? 'unknown'}`, type: 'bronze_mapping' });
+      }
     }
 
-    chunks.sort((a, b) => b.score - a.score);
-    // Increase budget for warehouse queries (sproc definitions are large)
-    let ctx = '', budget = isWarehouseQuery ? 16000 : 12000;
+    // For lineage queries: prioritise chain-relevant chunks (field_detail, table_lineage, bronze)
+    // by sorting them first within the same score tier
+    const CHAIN_TYPES = new Set(['field_detail', 'table_lineage']);
+    chunks.sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      if (isLineageQuery) {
+        const aChain = CHAIN_TYPES.has(a.type) ? 1 : 0;
+        const bChain = CHAIN_TYPES.has(b.type) ? 1 : 0;
+        return bChain - aChain;
+      }
+      return 0;
+    });
+    // Budget: lineage queries get 20k to ensure Bronze completeness; warehouse/pipeline 16k; default 12k
+    let ctx = '', budget = isLineageQuery ? 20000 : isWarehouseQuery ? 16000 : isPipelineQuery ? 16000 : 12000;
     for (const c of chunks) {
       if (ctx.length + c.text.length > budget) { if (ctx.length > 0) break; }
       ctx += c.text + '\n---\n';
     }
-    console.log(`[RAG] Final context: ${ctx.length} chars, ${chunks.length} chunks considered`);
+    console.log(`[RAG] Final context: ${ctx.length} chars, ${chunks.length} chunks considered, budget: ${budget}`);
     return ctx || '(No matching context found for this query)';
   } catch (err) {
     console.error('retrieveContext error:', err);
