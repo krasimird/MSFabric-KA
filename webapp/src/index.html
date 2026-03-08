@@ -731,8 +731,9 @@ function safeSheetName(name, maxLen = 31) {
 function uniqueSheetName(name, usedNames) {
   let base = safeSheetName(name);
   if (!usedNames.has(base)) { usedNames.add(base); return base; }
-  for (let i = 2; i < 999; i++) {
-    const candidate = safeSheetName(base.slice(0, 28) + '_' + i);
+  for (let i = 2; i < 9999; i++) {
+    const suffix = '_' + i;
+    const candidate = safeSheetName(name, 31 - suffix.length) + suffix;
     if (!usedNames.has(candidate)) { usedNames.add(candidate); return candidate; }
   }
   return base;
@@ -917,16 +918,17 @@ async function generateLineageExcel() {
     let zRow = 5;
     for (let ti = 0; ti < tables.length; ti++) {
       const tbl = tables[ti];
-      // Create detail sheet
+      // Create detail sheet — use zone+name as key to avoid cross-zone collisions
       const detailName = uniqueSheetName(tbl.name, usedNames);
-      detailSheetMap[tbl.name] = detailName;
+      const detailKey = zone + '::' + tbl.name;
+      detailSheetMap[detailKey] = detailName;
 
       const r = zoneWs.getRow(zRow);
       r.getCell(1).value = ti + 1;
       r.getCell(2).value = tbl.name;
       r.getCell(3).value = tbl.fieldCount || tbl.columns?.length || tbl.fields?.length || 0;
       r.getCell(4).value = tbl.source || '';
-      r.getCell(5).value = { text: '→ Detail', hyperlink: `#'${detailName}'!A1` };
+      r.getCell(5).value = { text: '→ Detail', hyperlink: `#'${detailSheetMap[detailKey]}'!A1` };
       r.getCell(5).font = { name: 'Calibri', size: 10, color: { argb: TEAL }, underline: true };
       styleDataRow(r, 5, zRow - 5, [4]);
       zRow++;
@@ -936,7 +938,8 @@ async function generateLineageExcel() {
 
     // ── Detail sheets ────────────────────────────────────────
     for (const tbl of tables) {
-      const dWs = wb.addWorksheet(detailSheetMap[tbl.name]);
+      const detailKey = zone + '::' + tbl.name;
+      const dWs = wb.addWorksheet(detailSheetMap[detailKey]);
       styleTitleRow(dWs, tbl.name, 7);
       addBackLink(dWs, zoneSheetNames[zone], `Back to ${zone}`);
 
