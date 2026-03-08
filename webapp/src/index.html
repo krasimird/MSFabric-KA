@@ -243,6 +243,9 @@
     </div>
     <button class="prompts-drawer-btn" id="promptsDrawerBtn">📋 Примерни промптове →</button>
     <div class="data-status" id="dataStatus"><span class="dot dot-loading"></span> Loading data…</div>
+    <div style="padding:6px 16px 10px;border-top:1px solid var(--border);margin-top:auto;">
+      <button id="analyzeBtn" onclick="startAnalysis()" style="background:none;border:none;color:var(--text-muted);font-size:11px;cursor:pointer;padding:2px 0;opacity:.7;transition:opacity .15s;" onmouseenter="this.style.opacity='1'" onmouseleave="this.style.opacity='.7'" title="Re-analyze knowledge base on server">🔄 Re-analyze knowledge base</button>
+    </div>
   </aside>
 
   <!-- Prompts Drawer (push pattern) -->
@@ -443,8 +446,10 @@ async function startAnalysis() {
   const btn = document.getElementById('analyzeBtn');
   const progress = document.getElementById('analysisProgress');
   const status = document.getElementById('analysisStatus');
+  const section = document.getElementById('analysisSection');
+  if (section) section.style.display = '';
   btn.disabled = true;
-  btn.textContent = 'Analyzing on server…';
+  btn.textContent = '⏳ Analyzing…';
   analysisReady = false;
   progress.style.width = '10%';
   status.textContent = 'Sending analysis request to server…';
@@ -470,12 +475,13 @@ async function startAnalysis() {
     buildPipelineIndex();
     progress.style.width = '100%';
     status.textContent = `✅ Done in ${result.elapsed_seconds}s — ${result.queries_analyzed} analyzed, ${result.queries_cached} cached, ${result.queries_failed || 0} failed. ${KNOWLEDGE.length} chunks.`;
-    btn.textContent = 'Re-analyze (server)';
+    btn.textContent = '🔄 Re-analyze knowledge base';
   } catch (err) {
     status.textContent = '❌ Analysis failed: ' + err.message;
     console.error('Analysis error:', err);
   } finally {
     btn.disabled = false;
+    btn.textContent = '🔄 Re-analyze knowledge base';
   }
 }
 
