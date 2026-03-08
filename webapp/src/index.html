@@ -692,22 +692,82 @@ function buildSemanticModelChunks() {
           const tblName = tblMatch[1].replace(/^['"]|['"]$/g, '').trim();
           tables.push(tblName);
 
-          // Extract measures: measure 'Name' = expression (may use ``` blocks)
-          const measureBlocks = payload.split(/\n\tmeasure\s+/);
-          for (let i = 1; i < measureBlocks.length; i++) {
-            const block = measureBlocks[i];
-            const nameMatch = block.match(/^['"]?([^'"\n=]+?)['"]?\s*=/);
-            if (!nameMatch) continue;
-            const mName = nameMatch[1].trim();
-            // Get expression: everything after = until lineageTag or annotation
-            let expr = block.slice(block.indexOf('=') + 1);
-            // Cut at lineageTag or annotation
-            const cutIdx = expr.search(/\n\t\tlineageTag:|\n\t\tannotation\s/);
-            if (cutIdx > 0) expr = expr.slice(0, cutIdx);
-            expr = expr.replace(/```/g, '').replace(/\n\t\t\t/g, '\n').trim();
-            if (!measuresPerTable[tblName]) measuresPerTable[tblName] = [];
-            measuresPerTable[tblName].push({ name: mName, expression: expr });
+          // Extract measures using line-by-line scanner (handles ``` blocks and varied indentation)
+          const lines = payload.split('\n');
+          let curMeasure = null; // { name, exprLines }
+          let inBacktickBlock = false;
+
+          const flushMeasure = () => {
+            if (curMeasure) {
+              const expr = curMeasure.exprLines.join('\n').replace(/```/g, '').trim();
+              if (!measuresPerTable[tblName]) measuresPerTable[tblName] = [];
+              measuresPerTable[tblName].push({ name: curMeasure.name, expression: expr });
+            }
+            curMeasure = null;
+            inBacktickBlock = false;
+          };
+
+          for (let li = 0; li < lines.length; li++) {
+            const line = lines[li];
+            const trimmed = line.trimStart();
+
+            // Detect measure start: line starts with "measure " (after optional whitespace)
+            if (/^measure\s+/i.test(trimmed)) {
+              flushMeasure(); // flush previous measure if any
+              // Extract name: measure 'Name' = ... OR measure Name = ...
+              const mMatch = trimmed.match(/^measure\s+(?:'([^']+)'|"([^"]+)"|(\S+?))\s*=/i);
+              if (!mMatch) continue;
+              const mName = (mMatch[1] || mMatch[2] || mMatch[3] || '').trim();
+              // Expression starts after the "= " on this line
+              const eqIdx = trimmed.indexOf('=');
+              const afterEq = eqIdx >= 0 ? trimmed.slice(eqIdx + 1).trim() : '';
+              curMeasure = { name: mName, exprLines: [] };
+              if (afterEq.startsWith('```')) {
+                inBacktickBlock = true;
+                curMeasure.exprLines.push(afterEq);
+              } else if (afterEq) {
+                curMeasure.exprLines.push(afterEq);
+              }
+              continue;
+            }
+
+            // If inside a measure, accumulate expression lines
+            if (curMeasure) {
+              // Stop accumulating on: column, hierarchy, partition, annotation, or another top-level keyword at same/lower indent
+              if (/^(column|hierarchy|partition|table)\s+/i.test(trimmed)) {
+                flushMeasure();
+                continue;
+              }
+              // lineageTag / formatString / changedProperty / annotation => end of expression
+              if (/^(lineageTag|formatString|changedProperty|annotation)\s*/i.test(trimmed)) {
+                if (inBacktickBlock) {
+                  // Keep going — we haven't closed the ``` block yet
+                  // But check if this line closes it
+                  if (trimmed.includes('```')) { inBacktickBlock = false; curMeasure.exprLines.push(line); }
+                  continue;
+                }
+                flushMeasure();
+                continue;
+              }
+              // Track ``` block boundaries
+              if (trimmed.includes('```')) {
+                curMeasure.exprLines.push(line);
+                inBacktickBlock = !inBacktickBlock;
+                continue;
+              }
+              // Accumulate indented continuation lines
+              if (inBacktickBlock || /^\t/.test(line) || /^\s{2,}/.test(line)) {
+                curMeasure.exprLines.push(line);
+              } else if (trimmed === '') {
+                // blank line — keep if inside backtick block, otherwise flush
+                if (inBacktickBlock) curMeasure.exprLines.push(line);
+                else flushMeasure();
+              } else {
+                flushMeasure();
+              }
+            }
           }
+          flushMeasure(); // flush last measure
         }
 
         // Parse relationships.tmdl
@@ -734,6 +794,12 @@ function buildSemanticModelChunks() {
       }
 
       const allMeasures = Object.values(measuresPerTable).flat();
+
+      // Per-model debug logging
+      console.log(`[SM] ${modelName}: ${tables.length} tables, ${allMeasures.length} measures, ${relationships.length} rels`);
+      for (const [tbl, ms] of Object.entries(measuresPerTable)) {
+        console.log(`  └─ ${tbl}: ${ms.length} measures → ${ms.map(m => m.name).join(', ')}`);
+      }
 
       // ── semantic_model_overview chunk ──
       const overviewText = `Semantic Model: ${modelName}\nWorkspace: ${wsName}\nTables (${tables.length}): ${tables.join(', ')}\nMeasures: ${allMeasures.length}\nRelationships: ${relationships.length}`;
