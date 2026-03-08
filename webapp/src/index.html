@@ -59,35 +59,58 @@
     .analysis-btn:hover { background: var(--teal); color: #fff; }
     .analysis-btn:disabled { opacity: .5; cursor: not-allowed; }
 
-    /* ── Примерни промптове panel ─────────────────────────────── */
-    .prompts-panel { padding-bottom: 4px; }
-    .prompts-toggle {
-      cursor: pointer; user-select: none; display: flex; align-items: center; gap: 4px;
+    /* ── Prompts Drawer (push pattern) ────────────────────────── */
+    .prompts-drawer-btn {
+      display: block; width: calc(100% - 24px); margin: 8px 12px; padding: 8px 12px;
+      border: 1px solid var(--border); border-radius: 6px; background: var(--teal-light);
+      cursor: pointer; font-size: 13px; font-weight: 600; color: var(--teal);
+      text-align: left; transition: background .15s, border-color .15s;
     }
-    .prompts-toggle:hover { color: var(--teal); }
-    .prompts-arrow { font-size: 10px; transition: transform .2s; display: inline-block; }
-    .prompts-arrow.open { transform: rotate(90deg); }
-    .prompts-body { padding-top: 6px; }
-    .prompt-cat {
-      font-size: 11px; font-weight: 600; color: var(--teal); margin: 8px 0 4px;
-      text-transform: none; letter-spacing: 0;
+    .prompts-drawer-btn:hover { background: var(--teal); color: #fff; border-color: var(--teal); }
+    .prompts-drawer {
+      width: 0; min-width: 0; overflow: hidden; background: var(--surface);
+      border-right: 1px solid var(--border); display: flex; flex-direction: column;
+      flex-shrink: 0; transition: width 300ms ease, min-width 300ms ease;
+      box-shadow: 2px 0 8px rgba(0,0,0,.08);
     }
-    .prompt-cat:first-child { margin-top: 0; }
-    .prompt-row {
-      display: flex; align-items: flex-start; gap: 4px; margin-bottom: 3px;
-      font-size: 12px; line-height: 1.4; color: var(--text);
+    .prompts-drawer.open { width: 320px; min-width: 320px; }
+    .drawer-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 16px; border-bottom: 1px solid var(--border); flex-shrink: 0;
     }
-    .prompt-text { flex: 1; word-break: break-word; }
-    .prompt-copy {
+    .drawer-header h3 { font-size: 14px; color: var(--teal); margin: 0; font-weight: 700; }
+    .drawer-close {
+      background: none; border: none; font-size: 18px; cursor: pointer;
+      color: var(--text-muted); padding: 2px 6px; border-radius: 4px; line-height: 1;
+    }
+    .drawer-close:hover { background: var(--border); color: var(--text); }
+    .drawer-body { flex: 1; overflow-y: auto; padding: 8px 0; }
+    /* Accordion */
+    .acc-header {
+      display: flex; align-items: center; gap: 6px; padding: 10px 16px;
+      cursor: pointer; user-select: none; font-size: 13px; font-weight: 600;
+      color: var(--text); border-bottom: 1px solid var(--border); transition: background .12s;
+    }
+    .acc-header:hover { background: var(--teal-light); }
+    .acc-arrow { font-size: 9px; transition: transform .2s; display: inline-block; }
+    .acc-header.open .acc-arrow { transform: rotate(90deg); }
+    .acc-header.open { color: var(--teal); background: var(--teal-light); }
+    .acc-body { display: none; padding: 6px 16px 10px; }
+    .acc-body.open { display: block; }
+    .drawer-prompt {
+      display: flex; align-items: flex-start; gap: 6px; margin-bottom: 6px;
+      font-size: 12.5px; line-height: 1.45; color: var(--text);
+    }
+    .drawer-prompt-text { flex: 1; word-break: break-word; }
+    .prompt-send {
       flex-shrink: 0; background: none; border: 1px solid var(--border); border-radius: 4px;
-      cursor: pointer; font-size: 11px; padding: 1px 5px; color: var(--text-muted);
-      transition: border-color .15s, color .15s; line-height: 1.3;
+      cursor: pointer; font-size: 11px; padding: 2px 7px; color: var(--text-muted);
+      transition: border-color .15s, color .15s, background .15s; white-space: nowrap;
     }
-    .prompt-copy:hover { border-color: var(--teal); color: var(--teal); }
-    .prompt-copy.copied { border-color: var(--teal); color: var(--teal); }
+    .prompt-send:hover { border-color: var(--teal); color: var(--teal); background: var(--teal-light); }
 
     /* ── Main Panel ───────────────────────────────────────────── */
-    .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+    .main { flex: 1; display: flex; flex-direction: column; min-width: 0; transition: flex 300ms ease; }
 
     /* ── Header ───────────────────────────────────────────────── */
     .header {
@@ -154,6 +177,7 @@
       .sidebar.open { left: 0; }
       .menu-toggle { display: block; }
       .message { max-width: 95%; }
+      .prompts-drawer { display: none; }
     }
   </style>
 </head>
@@ -184,34 +208,73 @@
       <div class="progress-bar"><div class="progress-fill" id="analysisProgress"></div></div>
       <div class="analysis-status" id="analysisStatus">Ready</div>
     </div>
-    <!-- Примерни промптове expandable panel -->
-    <div class="sidebar-section prompts-panel">
-      <h3 class="prompts-toggle" id="promptsToggle">📋 Примерни промптове <span class="prompts-arrow" id="promptsArrow">▸</span></h3>
-      <div class="prompts-body" id="promptsBody" style="display:none;">
-        <div class="prompt-cat">Lineage &amp; полета</div>
-        <div class="prompt-row"><span class="prompt-text">Откъде идва полето suma в stg_claim_expenses?</span><button class="prompt-copy" title="Copy">📋</button></div>
-        <div class="prompt-row"><span class="prompt-text">Как се изчислява cat_id в stg_claim_expenses?</span><button class="prompt-copy" title="Copy">📋</button></div>
-        <div class="prompt-row"><span class="prompt-text">Покажи пълния lineage на fact_premiums_written</span><button class="prompt-copy" title="Copy">📋</button></div>
-        <div class="prompt-cat">Таблици &amp; схеми</div>
-        <div class="prompt-row"><span class="prompt-text">Какви полета има dim_policy?</span><button class="prompt-copy" title="Copy">📋</button></div>
-        <div class="prompt-row"><span class="prompt-text">Кои таблици захранват Gold слоя?</span><button class="prompt-copy" title="Copy">📋</button></div>
-        <div class="prompt-row"><span class="prompt-text">Какви таблици има в Silver Staging?</span><button class="prompt-copy" title="Copy">📋</button></div>
-        <div class="prompt-cat">Pipelines &amp; оркестрация</div>
-        <div class="prompt-row"><span class="prompt-text">Обясни pipeline GenDWH_Orchestration_DP</span><button class="prompt-copy" title="Copy">📋</button></div>
-        <div class="prompt-row"><span class="prompt-text">Какви activities има в Bronze фазата на pipeline-а?</span><button class="prompt-copy" title="Copy">📋</button></div>
-        <div class="prompt-row"><span class="prompt-text">Как се параметризира GenDWH_Orchestrator_NB?</span><button class="prompt-copy" title="Copy">📋</button></div>
-        <div class="prompt-cat">Impact analysis</div>
-        <div class="prompt-row"><span class="prompt-text">Ако променя fact_premiums_written, кои reports ще бъдат засегнати?</span><button class="prompt-copy" title="Copy">📋</button></div>
-        <div class="prompt-row"><span class="prompt-text">Кои обекти зависят от dim_policy?</span><button class="prompt-copy" title="Copy">📋</button></div>
-        <div class="prompt-cat">Генериране на документи</div>
-        <div class="prompt-row"><span class="prompt-text">Генерирай Data Lineage Excel</span><button class="prompt-copy" title="Copy">📋</button></div>
-        <div class="prompt-row"><span class="prompt-text">Генерирай Data Dictionary</span><button class="prompt-copy" title="Copy">📋</button></div>
-        <div class="prompt-row"><span class="prompt-text">Генерирай Business Glossary</span><button class="prompt-copy" title="Copy">📋</button></div>
-        <div class="prompt-row"><span class="prompt-text">Направи ми справка за всички таблици в Gold слоя</span><button class="prompt-copy" title="Copy">📋</button></div>
-      </div>
-    </div>
+    <button class="prompts-drawer-btn" id="promptsDrawerBtn">📋 Примерни промптове →</button>
     <div class="data-status" id="dataStatus"><span class="dot dot-loading"></span> Loading data…</div>
   </aside>
+
+  <!-- Prompts Drawer (push pattern) -->
+  <div class="prompts-drawer" id="promptsDrawer">
+    <div class="drawer-header">
+      <h3>📋 Примерни промптове</h3>
+      <button class="drawer-close" id="drawerClose" title="Затвори">✕</button>
+    </div>
+    <div class="drawer-body">
+      <div class="acc-section">
+        <div class="acc-header" data-acc="lineage"><span class="acc-arrow">▸</span> 🔍 Lineage &amp; полета</div>
+        <div class="acc-body" data-acc-body="lineage">
+          <div class="drawer-prompt"><span class="drawer-prompt-text">Откъде идва полето suma в stg_claim_expenses?</span><button class="prompt-send">→ Изпрати</button></div>
+          <div class="drawer-prompt"><span class="drawer-prompt-text">Как се изчислява cat_id в stg_claim_expenses?</span><button class="prompt-send">→ Изпрати</button></div>
+          <div class="drawer-prompt"><span class="drawer-prompt-text">Покажи пълния lineage на fact_premiums_written</span><button class="prompt-send">→ Изпрати</button></div>
+          <div class="drawer-prompt"><span class="drawer-prompt-text">Кои source полета захранват fact_claims_paid.cp_suma?</span><button class="prompt-send">→ Изпрати</button></div>
+          <div class="drawer-prompt"><span class="drawer-prompt-text">Как се попълва pol_sk в dim_claims — от кой join идва?</span><button class="prompt-send">→ Изпрати</button></div>
+          <div class="drawer-prompt"><span class="drawer-prompt-text">Защо полето има стойност -1 в определени редове?</span><button class="prompt-send">→ Изпрати</button></div>
+        </div>
+      </div>
+      <div class="acc-section">
+        <div class="acc-header" data-acc="tables"><span class="acc-arrow">▸</span> 📋 Таблици &amp; схеми</div>
+        <div class="acc-body" data-acc-body="tables">
+          <div class="drawer-prompt"><span class="drawer-prompt-text">Какви полета има dim_policy?</span><button class="prompt-send">→ Изпрати</button></div>
+          <div class="drawer-prompt"><span class="drawer-prompt-text">Кои таблици захранват Gold слоя?</span><button class="prompt-send">→ Изпрати</button></div>
+          <div class="drawer-prompt"><span class="drawer-prompt-text">Какви таблици има в Silver Staging?</span><button class="prompt-send">→ Изпрати</button></div>
+          <div class="drawer-prompt"><span class="drawer-prompt-text">Какви са разликите между Silver Raw и Silver Staging?</span><button class="prompt-send">→ Изпрати</button></div>
+          <div class="drawer-prompt"><span class="drawer-prompt-text">Колко реда има fact_premiums_written?</span><button class="prompt-send">→ Изпрати</button></div>
+          <div class="drawer-prompt"><span class="drawer-prompt-text">Кои таблици имат SCD2 логика?</span><button class="prompt-send">→ Изпрати</button></div>
+        </div>
+      </div>
+      <div class="acc-section">
+        <div class="acc-header" data-acc="pipelines"><span class="acc-arrow">▸</span> ⚙️ Pipelines &amp; оркестрация</div>
+        <div class="acc-body" data-acc-body="pipelines">
+          <div class="drawer-prompt"><span class="drawer-prompt-text">Обясни pipeline GenDWH_Orchestration_DP</span><button class="prompt-send">→ Изпрати</button></div>
+          <div class="drawer-prompt"><span class="drawer-prompt-text">Какви activities има в Bronze фазата на pipeline-а?</span><button class="prompt-send">→ Изпрати</button></div>
+          <div class="drawer-prompt"><span class="drawer-prompt-text">Как се параметризира GenDWH_Orchestrator_NB?</span><button class="prompt-send">→ Изпрати</button></div>
+          <div class="drawer-prompt"><span class="drawer-prompt-text">В какъв ред се изпълняват Silver L1 и L2?</span><button class="prompt-send">→ Изпрати</button></div>
+          <div class="drawer-prompt"><span class="drawer-prompt-text">Какво се случва ако Landing Zone провали?</span><button class="prompt-send">→ Изпрати</button></div>
+          <div class="drawer-prompt"><span class="drawer-prompt-text">Как работи retry логиката в pipeline-а?</span><button class="prompt-send">→ Изпрати</button></div>
+        </div>
+      </div>
+      <div class="acc-section">
+        <div class="acc-header" data-acc="impact"><span class="acc-arrow">▸</span> 💥 Impact analysis</div>
+        <div class="acc-body" data-acc-body="impact">
+          <div class="drawer-prompt"><span class="drawer-prompt-text">Ако променя fact_premiums_written, кои reports ще бъдат засегнати?</span><button class="prompt-send">→ Изпрати</button></div>
+          <div class="drawer-prompt"><span class="drawer-prompt-text">Кои обекти зависят от dim_policy?</span><button class="prompt-send">→ Изпрати</button></div>
+          <div class="drawer-prompt"><span class="drawer-prompt-text">Ако добавя ново поле в stg_claim_expenses, какво трябва да обновя надолу по веригата?</span><button class="prompt-send">→ Изпрати</button></div>
+          <div class="drawer-prompt"><span class="drawer-prompt-text">Кои таблици се презареждат при промяна на Bronze schema?</span><button class="prompt-send">→ Изпрати</button></div>
+          <div class="drawer-prompt"><span class="drawer-prompt-text">Ако Bronze таблица landing_payments_liquidationcosts смени тип на колона, какъв е impact-ът?</span><button class="prompt-send">→ Изпрати</button></div>
+        </div>
+      </div>
+      <div class="acc-section">
+        <div class="acc-header" data-acc="docs"><span class="acc-arrow">▸</span> 📄 Генериране на документи</div>
+        <div class="acc-body" data-acc-body="docs">
+          <div class="drawer-prompt"><span class="drawer-prompt-text">Генерирай Data Lineage Excel</span><button class="prompt-send">→ Изпрати</button></div>
+          <div class="drawer-prompt"><span class="drawer-prompt-text">Генерирай Data Dictionary</span><button class="prompt-send">→ Изпрати</button></div>
+          <div class="drawer-prompt"><span class="drawer-prompt-text">Генерирай Business Glossary</span><button class="prompt-send">→ Изпрати</button></div>
+          <div class="drawer-prompt"><span class="drawer-prompt-text">Направи ми справка за всички таблици в Gold слоя</span><button class="prompt-send">→ Изпрати</button></div>
+          <div class="drawer-prompt"><span class="drawer-prompt-text">Направи ми справка за всички таблици които консумират dim_policy</span><button class="prompt-send">→ Изпрати</button></div>
+          <div class="drawer-prompt"><span class="drawer-prompt-text">Направи ми справка за всички fact таблици с техните source таблици</span><button class="prompt-send">→ Изпрати</button></div>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- Main -->
   <div class="main">
@@ -737,7 +800,7 @@ async function retrieveContext(query) {
         } else {
           text = `${chunk.type}: ${chunk.id}\n${JSON.stringify(chunk).slice(0, 500)}`;
         }
-        chunks.push({ score, text, type: chunk.type });
+        chunks.push({ score, text, type: chunk.type, _raw: chunk });
       }
       // Debug: log top matches by type
       const matched = {};
@@ -864,7 +927,39 @@ async function retrieveContext(query) {
     for (const c of chunks) {
       if (ctx.length + c.text.length > budget) { if (ctx.length > 0) break; }
       ctx += c.text + '\n---\n';
+      c._included = true;
     }
+    // ── Fallback: detect truncated SQL and append full source_query ──
+    const TRUNC_PATTERNS = /-- \.\.\.|- \.\.\.|\/\* \.\.\.|тук са пропуснати|-- \(/i;
+    if (TRUNC_PATTERNS.test(ctx) && KB.metadata && KB.metadata.queries) {
+      // Collect table names from included chunks (target_table, chunk.table, chunk.id)
+      const ctxTableNames = new Set();
+      for (const c of chunks) {
+        if (!c._included) continue; // only check chunks that made it into ctx
+        const raw = c._raw;
+        if (raw) {
+          if (raw.table) ctxTableNames.add(raw.table.toLowerCase());
+          if (raw.target_table) ctxTableNames.add(raw.target_table.toLowerCase());
+          if (raw.id) ctxTableNames.add(raw.id.toLowerCase());
+        }
+      }
+      // Also extract table-like tokens from the user query (underscore-joined words)
+      for (const t of tokens) { if (t.includes('_')) ctxTableNames.add(t); }
+
+      // Find matching metadata queries with full SQL
+      const appended = new Set();
+      for (const mq of KB.metadata.queries) {
+        const tbl = (mq.target_table || mq.meta_table || '').toLowerCase();
+        if (!tbl || !ctxTableNames.has(tbl)) continue;
+        if (appended.has(tbl)) continue;
+        const sql = mq.source_query || '';
+        if (!sql || sql.length < 50) continue;
+        ctx += `\n--- FULL SOURCE SQL for ${mq.target_table || mq.meta_table} [${mq.layer||''}] ---\n${sql}\n---\n`;
+        appended.add(tbl);
+        console.log(`[RAG] Appended full SQL for ${tbl} (${sql.length} chars) — truncation fallback`);
+      }
+    }
+
     console.log(`[RAG] Final context: ${ctx.length} chars, ${chunks.length} chunks considered, budget: ${budget}`);
     return ctx || '(No matching context found for this query)';
   } catch (err) {
@@ -2180,26 +2275,44 @@ document.querySelectorAll('.quick-btn').forEach(btn => {
 menuToggle.addEventListener('click', () => sidebar.classList.toggle('open'));
 chatArea.addEventListener('click', () => sidebar.classList.remove('open'));
 
-// ── Примерни промптове panel ────────────────────────────────────
-const promptsToggle = document.getElementById('promptsToggle');
-const promptsBody = document.getElementById('promptsBody');
-const promptsArrow = document.getElementById('promptsArrow');
+// ── Prompts Drawer (push pattern) ───────────────────────────────
+const promptsDrawer = document.getElementById('promptsDrawer');
+const promptsDrawerBtn = document.getElementById('promptsDrawerBtn');
+const drawerClose = document.getElementById('drawerClose');
 
-promptsToggle.addEventListener('click', () => {
-  const open = promptsBody.style.display !== 'none';
-  promptsBody.style.display = open ? 'none' : 'block';
-  promptsArrow.classList.toggle('open', !open);
+function toggleDrawer(open) {
+  const isOpen = open !== undefined ? open : !promptsDrawer.classList.contains('open');
+  promptsDrawer.classList.toggle('open', isOpen);
+}
+promptsDrawerBtn.addEventListener('click', () => toggleDrawer(true));
+drawerClose.addEventListener('click', () => toggleDrawer(false));
+
+// Accordion — one section open at a time
+document.querySelectorAll('.acc-header').forEach(header => {
+  header.addEventListener('click', () => {
+    const key = header.dataset.acc;
+    const body = document.querySelector(`.acc-body[data-acc-body="${key}"]`);
+    const isOpen = header.classList.contains('open');
+    // Close all
+    document.querySelectorAll('.acc-header').forEach(h => h.classList.remove('open'));
+    document.querySelectorAll('.acc-body').forEach(b => b.classList.remove('open'));
+    // Toggle clicked
+    if (!isOpen) {
+      header.classList.add('open');
+      body.classList.add('open');
+    }
+  });
 });
 
-document.querySelectorAll('.prompt-copy').forEach(btn => {
+// "→ Изпрати" buttons — insert prompt into chat input
+document.querySelectorAll('.prompt-send').forEach(btn => {
   btn.addEventListener('click', () => {
-    const text = btn.parentElement.querySelector('.prompt-text').textContent;
-    navigator.clipboard.writeText(text).then(() => {
-      const orig = btn.textContent;
-      btn.textContent = '✓ Копирано';
-      btn.classList.add('copied');
-      setTimeout(() => { btn.textContent = orig; btn.classList.remove('copied'); }, 1200);
-    });
+    const text = btn.parentElement.querySelector('.drawer-prompt-text').textContent;
+    userInput.value = text;
+    userInput.focus();
+    userInput.style.height = 'auto';
+    userInput.style.height = Math.min(userInput.scrollHeight, 120) + 'px';
+    toggleDrawer(false);
   });
 });
 
