@@ -1924,6 +1924,136 @@ async function generateBusinessGlossary() {
   console.log(`[SKILL] Business Glossary Excel generated: ${glossaryEntries.length} terms, ${totalSheets} sheets, ${(buffer.byteLength/1024).toFixed(0)} KB`);
 }
 
+// ── Generate Custom Report (Excel) ───────────────────────────
+async function generateCustomReportExcel(query) {
+  if (!KB) { appendMessage('assistant', '⚠️ No data loaded — cannot generate report.'); return; }
+  const progressDiv = document.createElement('div');
+  progressDiv.className = 'message assistant';
+  progressDiv.innerHTML = '<div class="msg-label">Assistant</div><div class="msg-bubble" id="reportProgress">📋 <b>Generating Custom Report Excel...</b><br></div>';
+  chatArea.appendChild(progressDiv);
+  chatArea.scrollTop = chatArea.scrollHeight;
+  const progEl = document.getElementById('reportProgress');
+  const log = (msg) => { progEl.innerHTML += msg + '<br>'; chatArea.scrollTop = chatArea.scrollHeight; };
+  await new Promise(r => setTimeout(r, 50));
+
+  // ── Build context for Claude ───────────────────────────────
+  log('Gathering context from knowledge base...');
+  const context = analysisReady ? retrieveContext(query) : '';
+
+  // ── Ask Claude for structured report data ──────────────────
+  log('Asking Claude to generate report data...');
+  let reportTitle = 'Custom Report';
+  let headers = [];
+  let rows = [];
+  try {
+    const resp = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: [{ role: 'user', content: `${query}\n\nContext from knowledge base:\n${context}` }],
+        system: `You are a data warehouse documentation expert for an insurance company (Generali) using Medallion architecture (Bronze/Silver/Gold/Platinum) in Microsoft Fabric.
+The user wants a custom report exported to Excel. Analyze the request and return ONLY valid JSON with this structure:
+{"title": "Report Title", "headers": ["Col1", "Col2", ...], "rows": [["val1", "val2", ...], ...]}
+Rules:
+- title: a short descriptive title for the report (max 60 chars)
+- headers: column names relevant to the query
+- rows: data rows with values matching the headers
+- Include as much relevant data as you can find in the context
+- If the context has tables, fields, pipelines, lineage info — use it
+- No markdown, no code fences, just the JSON object`
+      })
+    });
+    const data = await resp.json();
+    const raw = data.content ? data.content.map(c => c.text).join('') : '{}';
+    const cleaned = raw.replace(/```json\s*/gi, '').replace(/```/g, '').trim();
+    const parsed = JSON.parse(cleaned);
+    reportTitle = parsed.title || reportTitle;
+    headers = Array.isArray(parsed.headers) ? parsed.headers : [];
+    rows = Array.isArray(parsed.rows) ? parsed.rows : [];
+  } catch (err) {
+    log(`⚠️ Claude API error: ${err.message}. Generating fallback report...`);
+    headers = ['Info'];
+    rows = [['Report generation failed — please try again or rephrase your query.']];
+  }
+
+  if (headers.length === 0) {
+    headers = ['Info'];
+    rows = [['No data returned for this query.']];
+  }
+  log(`Report: <b>${reportTitle}</b> — ${headers.length} columns, ${rows.length} rows`);
+
+  // ── Build Excel workbook ───────────────────────────────────
+  log('Building Excel workbook...');
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'GenDWH Knowledge Assistant';
+  wb.created = new Date();
+  const usedNames = new Set();
+  const COL = headers.length;
+
+  const ws = wb.addWorksheet(safeName('Report', usedNames));
+
+  // Title row (merged)
+  ws.mergeCells(1, 1, 1, COL);
+  const tc = ws.getCell('A1');
+  tc.value = reportTitle;
+  tc.font = { name: 'Calibri Light', size: 16, bold: true, color: { argb: WHITE } };
+  tc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: TEAL } };
+  tc.alignment = { vertical: 'middle', horizontal: 'center' };
+  ws.getRow(1).height = 36;
+
+  // Metadata row
+  ws.getCell('A2').value = `Generated: ${new Date().toISOString().slice(0,10)} | Query: ${query.slice(0, 120)}`;
+  ws.getCell('A2').font = { name: 'Calibri', size: 9, italic: true, color: { argb: '666666' } };
+
+  // Header row (row 4)
+  const hdr = ws.getRow(4);
+  headers.forEach((h, i) => { hdr.getCell(i + 1).value = h; });
+  styleHeader(hdr, COL);
+
+  // Data rows
+  for (let ri = 0; ri < rows.length; ri++) {
+    const r = ws.getRow(5 + ri);
+    const rowData = rows[ri];
+    for (let ci = 0; ci < COL; ci++) {
+      r.getCell(ci + 1).value = Array.isArray(rowData) ? (rowData[ci] ?? '') : '';
+    }
+    styleDataRow(r, COL, ri);
+  }
+
+  // Auto-size columns (estimate)
+  ws.columns = headers.map((h, i) => {
+    let maxLen = h.length;
+    for (const row of rows) {
+      const val = Array.isArray(row) ? String(row[i] || '') : '';
+      if (val.length > maxLen) maxLen = val.length;
+    }
+    return { width: Math.min(Math.max(maxLen + 4, 12), 60) };
+  });
+  ws.views = [{ state: 'frozen', ySplit: 4 }];
+
+  // Footer
+  const footerRow = 5 + rows.length + 1;
+  ws.getCell(`A${footerRow}`).value = 'InspirIT — GenDWH Knowledge Assistant';
+  ws.getCell(`A${footerRow}`).font = { name: 'Calibri Light', size: 10, italic: true, color: { argb: '999999' } };
+
+  // ── Generate & download ────────────────────────────────────
+  log('Writing Excel file...');
+  const buffer = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(blob);
+
+  const safeTitle = reportTitle.replace(/[^a-zA-Z0-9_\- ]/g, '').replace(/\s+/g, '_').slice(0, 40);
+  progEl.innerHTML = `📋 <b>Custom Report Excel ready!</b><br>
+    <b>${reportTitle}</b> — ${rows.length} rows, ${headers.length} columns<br>
+    <a href="${url}" download="GenDWH_Report_${safeTitle}_${new Date().toISOString().slice(0,10)}.xlsx"
+       style="display:inline-block;margin-top:8px;padding:8px 16px;background:#1C8D7A;color:white;border-radius:6px;text-decoration:none;font-weight:bold;">
+       📥 Download Excel
+    </a>`;
+  chatArea.scrollTop = chatArea.scrollHeight;
+  chatHistory.push({ role: 'assistant', content: `[Generated Custom Report: ${reportTitle} — ${rows.length} rows]` });
+  console.log(`[SKILL] Custom Report Excel generated: ${rows.length} rows, ${headers.length} cols, ${(buffer.byteLength/1024).toFixed(0)} KB`);
+}
+
 // ── Skill detection ────────────────────────────────────────────
 function detectSkill(text) {
   const t = text.trim().toLowerCase();
@@ -1933,6 +2063,8 @@ function detectSkill(text) {
     return 'data_dictionary';
   if (/^\/glossary\b/.test(t) || /генерирай\s+glossary|generate\s+glossary|business\s+glossary|бизнес\s+речник/i.test(t))
     return 'business_glossary';
+  if (/^\/report\b/.test(t) || /направи\s+(ми\s+)?справка|custom\s+report|генерирай\s+справка|generate\s+report\s+excel|направи\s+report/i.test(t))
+    return 'custom_report';
   return null;
 }
 
@@ -1962,6 +2094,8 @@ async function sendMessage(text) {
         await generateDictionaryExcel();
       } else if (skill === 'business_glossary') {
         await generateBusinessGlossary();
+      } else if (skill === 'custom_report') {
+        await generateCustomReportExcel(text);
       }
     } catch (err) {
       appendMessage('assistant', '⚠️ Skill error: ' + err.message);
