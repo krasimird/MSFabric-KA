@@ -327,6 +327,191 @@ async function startAnalysis() {
   }
 }
 
+// ── Chain-aware lineage following ────────────────────────────
+function followLineageChain(fieldName) {
+  const chain = { platinum: [], gold: [], silver: [], bronze: [], found: false };
+  if (!fieldName || KNOWLEDGE.length === 0) return chain;
+
+  const fieldLower = fieldName.toLowerCase();
+  console.log(`[CHAIN] Starting chain trace for field: ${fieldName}`);
+
+  // STEP 1: Find in Platinum (warehouse_sproc) — parse definition for field mapping
+  for (const chunk of KNOWLEDGE) {
+    if (chunk.type !== 'warehouse_sproc' || !chunk.definition) continue;
+    const defLower = chunk.definition.toLowerCase();
+    if (!defLower.includes(fieldLower)) continue;
+
+    // Parse "AS field_name" pattern to find source column
+    // Patterns: [src_col] AS target, src_col AS target, expression AS target
+    const defText = chunk.definition;
+    const asPatterns = [
+      new RegExp(`\\[([^\\]]+)\\]\\s+AS\\s+${fieldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i'),
+      new RegExp(`([a-z_][a-z0-9_.]+)\\s+AS\\s+${fieldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i'),
+    ];
+    let sourceCol = null;
+    for (const pat of asPatterns) {
+      const m = defText.match(pat);
+      if (m) { sourceCol = m[1]; break; }
+    }
+
+    // Parse FROM clause for source table
+    // Pattern: FROM GenDWH_GoldDWH_LH.dbo.table_name or FROM database.schema.table
+    const fromMatch = defText.match(/FROM\s+(?:\[?[\w]+\]?\.)?(?:\[?[\w]+\]?\.)?\[?([\w]+)\]?/i);
+    const sourceTable = fromMatch ? fromMatch[1] : null;
+
+    chain.platinum.push({
+      sproc: `[${chunk.schema}].[${chunk.name}]`,
+      field: fieldName,
+      sourceCol: sourceCol || '(expression — see SQL)',
+      sourceTable: sourceTable || '(see SQL)',
+      definition: chunk.definition.slice(0, 3000),
+    });
+    chain.found = true;
+    console.log(`[CHAIN] Platinum: ${chunk.name} → sourceCol=${sourceCol}, sourceTable=${sourceTable}`);
+  }
+
+  // STEP 2: Follow to Gold — search field_detail where table≈sourceTable and target_field≈sourceCol
+  const goldTables = new Set();
+  const silverTargets = []; // {table, field} to search in next step
+  for (const p of chain.platinum) {
+    if (!p.sourceTable) continue;
+    const tblLower = p.sourceTable.toLowerCase();
+    const colLower = (p.sourceCol || '').toLowerCase();
+
+    for (const chunk of KNOWLEDGE) {
+      if (chunk.type !== 'field_detail') continue;
+      if (!chunk.table || !chunk.table.toLowerCase().includes(tblLower)) continue;
+      // Match specific field if we know it, otherwise include all fields of this table
+      if (colLower && colLower !== '(expression — see sql)' && chunk.target_field) {
+        if (chunk.target_field.toLowerCase() !== colLower) continue;
+      }
+      if (goldTables.has(chunk.id)) continue;
+      goldTables.add(chunk.id);
+      chain.gold.push(chunk);
+      if (chunk.source_table) silverTargets.push({ table: chunk.source_table, field: chunk.source_column || '' });
+    }
+  }
+  // If no specific col match, also grab table_lineage for overview
+  if (chain.gold.length === 0) {
+    for (const p of chain.platinum) {
+      if (!p.sourceTable) continue;
+      for (const chunk of KNOWLEDGE) {
+        if (chunk.type !== 'table_lineage') continue;
+        if (chunk.id && chunk.id.toLowerCase().includes(p.sourceTable.toLowerCase())) {
+          chain.gold.push(chunk);
+          // Add all source tables as silver targets
+          for (const st of (chunk.source_tables || [])) silverTargets.push({ table: st, field: '' });
+        }
+      }
+    }
+  }
+  console.log(`[CHAIN] Gold: ${chain.gold.length} chunks, silverTargets: ${silverTargets.map(s=>s.table).join(', ')}`);
+
+  // STEP 3: Follow to Silver
+  const silverTables = new Set();
+  const bronzeTargets = [];
+  for (const st of silverTargets) {
+    const tblLower = st.table.toLowerCase().replace(/^.*\./, ''); // strip schema prefix
+    const colLower = st.field.toLowerCase();
+    for (const chunk of KNOWLEDGE) {
+      if (chunk.type !== 'field_detail') continue;
+      if (!chunk.table || !chunk.table.toLowerCase().includes(tblLower)) continue;
+      if (colLower && chunk.target_field && chunk.target_field.toLowerCase() !== colLower) continue;
+      if (silverTables.has(chunk.id)) continue;
+      silverTables.add(chunk.id);
+      chain.silver.push(chunk);
+      if (chunk.source_table) bronzeTargets.push({ table: chunk.source_table });
+    }
+    // Also grab table_lineage for Silver tables
+    for (const chunk of KNOWLEDGE) {
+      if (chunk.type !== 'table_lineage') continue;
+      if (chunk.id && chunk.id.toLowerCase().includes(tblLower)) {
+        if (!silverTables.has('tl_' + chunk.id)) {
+          silverTables.add('tl_' + chunk.id);
+          chain.silver.push(chunk);
+          for (const src of (chunk.source_tables || [])) bronzeTargets.push({ table: src });
+        }
+      }
+    }
+  }
+  console.log(`[CHAIN] Silver: ${chain.silver.length} chunks, bronzeTargets: ${bronzeTargets.map(b=>b.table).join(', ')}`);
+
+  // STEP 4: Follow to Bronze
+  if (KB && KB.metadata && KB.metadata.bronze_meta) {
+    for (const bt of bronzeTargets) {
+      const tblLower = bt.table.toLowerCase().replace(/^.*\./, '');
+      for (const bm of KB.metadata.bronze_meta) {
+        const bmTarget = (bm.target_table || '').toLowerCase();
+        if (bmTarget.includes(tblLower) || tblLower.includes(bmTarget)) {
+          const key = `${bm.source_schema}.${bm.source_table}→${bm.target_table}`;
+          if (!chain.bronze.some(b => `${b.source_schema}.${b.source_table}→${b.target_table}` === key)) {
+            chain.bronze.push(bm);
+          }
+        }
+      }
+    }
+  }
+  console.log(`[CHAIN] Bronze: ${chain.bronze.length} mappings`);
+  console.log(`[CHAIN] Summary: P=${chain.platinum.length} G=${chain.gold.length} S=${chain.silver.length} B=${chain.bronze.length}`);
+  return chain;
+}
+
+function formatChainContext(chain, fieldName) {
+  let ctx = '';
+  ctx += `=== PLATINUM LAYER (Warehouse) ===\n`;
+  if (chain.platinum.length > 0) {
+    for (const p of chain.platinum) {
+      ctx += `Stored Procedure: ${p.sproc}\n`;
+      ctx += `Target field: ${p.field}\n`;
+      ctx += `Source column: ${p.sourceCol}\n`;
+      ctx += `Source table: ${p.sourceTable}\n`;
+      ctx += `SQL Definition:\n${p.definition}\n\n`;
+    }
+  } else {
+    ctx += `(No Platinum mapping found for ${fieldName})\n`;
+  }
+  ctx += `\n=== GOLD LAYER (DWH) ===\n`;
+  if (chain.gold.length > 0) {
+    for (const g of chain.gold) {
+      if (g.type === 'field_detail') {
+        ctx += `AI Lineage: ${g.table}.${g.target_field} ← ${g.source_table||'?'}.${g.source_column||'?'}\n`;
+        ctx += `Type: ${g.transformation_type||''} | Expr: ${g.expression||''}\n`;
+        ctx += `Logic: ${g.business_logic||''}\n\n`;
+      } else if (g.type === 'table_lineage') {
+        ctx += `Table: ${g.id} (${g.layer} ${g.mode}) — ${g.field_count} fields\n`;
+        ctx += `Sources: ${g.source_tables?.join(', ')||'none'}\n\n`;
+      }
+    }
+  } else {
+    ctx += `(No Gold lineage found)\n`;
+  }
+  ctx += `\n=== SILVER LAYER (Staging) ===\n`;
+  if (chain.silver.length > 0) {
+    for (const s of chain.silver) {
+      if (s.type === 'field_detail') {
+        ctx += `AI Lineage: ${s.table}.${s.target_field} ← ${s.source_table||'?'}.${s.source_column||'?'}\n`;
+        ctx += `Type: ${s.transformation_type||''} | Expr: ${s.expression||''}\n`;
+        ctx += `Logic: ${s.business_logic||''}\n\n`;
+      } else if (s.type === 'table_lineage') {
+        ctx += `Table: ${s.id} (${s.layer} ${s.mode}) — ${s.field_count} fields\n`;
+        ctx += `Sources: ${s.source_tables?.join(', ')||'none'}\n\n`;
+      }
+    }
+  } else {
+    ctx += `(No Silver lineage found)\n`;
+  }
+  ctx += `\n=== BRONZE LAYER (Landing/Source) ===\n`;
+  if (chain.bronze.length > 0) {
+    for (const b of chain.bronze) {
+      ctx += `Bronze Mapping: ${b.target_table} ← ${b.source_schema||''}.${b.source_table}\n`;
+      ctx += `Columns: ${b.source_columns || '*'} | Active: ${b.is_active}\n\n`;
+    }
+  } else {
+    ctx += `(No Bronze mapping found)\n`;
+  }
+  return ctx;
+}
+
 // ── RAG retrieval (keyword + knowledge base) ──────────────────
 async function retrieveContext(query) {
   if (!KB) return '(No data loaded)';
@@ -339,18 +524,42 @@ async function retrieveContext(query) {
     const tokens = [...new Set([...compoundTokens, ...splitTokens])]; // deduplicate
 
     // Detect warehouse/Platinum queries
-    const isWarehouseQuery = /platinum|warehouse|dwh|stored.?proc|sproc|хранилищ/i.test(query);
+    const isWarehouseQuery = /platinum|warehouse|dwh|stored.?proc|sproc|хранилищ|платинум/i.test(query);
     const warehouseBoost = isWarehouseQuery ? 12 : 0;
+
+    // Detect chain lineage queries (end-to-end tracing)
+    const isChainQuery = /от платинум до бронз|end.to.end|full lineage|пълен lineage|проследи до|проследи линеадж|trace.*lineage|от.+до бронз|platinum.*bronze|бронз.*платинум/i.test(query);
 
     console.log(`[RAG] Query: "${query}"`);
     console.log(`[RAG] Tokens (${tokens.length}): ${tokens.join(', ')}`);
     console.log(`[RAG] Compound tokens: ${compoundTokens.join(', ') || 'none'}`);
-    console.log(`[RAG] Warehouse query: ${isWarehouseQuery}`);
+    console.log(`[RAG] Warehouse query: ${isWarehouseQuery}, Chain query: ${isChainQuery}`);
     console.log(`[RAG] KNOWLEDGE chunks: ${KNOWLEDGE.length}, analysisReady: ${analysisReady}`);
     if (KNOWLEDGE.length > 0) {
       const types = {};
       for (const c of KNOWLEDGE) types[c.type] = (types[c.type]||0) + 1;
       console.log('[RAG] Chunk types:', JSON.stringify(types));
+    }
+
+    // ── Chain lineage: follow Platinum→Gold→Silver→Bronze ────
+    if (isChainQuery && analysisReady && KNOWLEDGE.length > 0 && compoundTokens.length > 0) {
+      const fieldName = compoundTokens[0]; // primary field to trace
+      console.log(`[RAG] Chain mode: tracing field "${fieldName}"`);
+      const chain = followLineageChain(fieldName);
+      if (chain.found) {
+        const chainCtx = formatChainContext(chain, fieldName);
+        console.log(`[RAG] Chain context: ${chainCtx.length} chars`);
+        // Also add normal keyword search results but with reduced budget
+        const normalChunks = [];
+        // (fall through to normal search below, but prepend chain context)
+        window._lastChainQuery = true;
+        return chainCtx;
+      } else {
+        console.log(`[RAG] Chain: no Platinum match found, falling back to normal search`);
+        window._lastChainQuery = false;
+      }
+    } else {
+      window._lastChainQuery = false;
     }
 
     const chunks = [];
@@ -525,7 +734,11 @@ async function sendMessage(text) {
 
   // RAG context
   const context = await retrieveContext(text);
-  const systemWithContext = SYSTEM_PROMPT + '\n\nCONTEXT:\n' + context;
+  let systemWithContext = SYSTEM_PROMPT;
+  if (window._lastChainQuery) {
+    systemWithContext += '\n\nIMPORTANT: The context contains a multi-layer lineage chain from Platinum (Warehouse) to Bronze (Landing). Trace and explain each step of the transformation pipeline, layer by layer. Show how the field flows through each layer with specific column names and transformations.';
+  }
+  systemWithContext += '\n\nCONTEXT:\n' + context;
 
   try {
     sendBtn.disabled = true;
