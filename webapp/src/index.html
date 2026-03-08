@@ -7,6 +7,8 @@
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.2/styles/vis-network.min.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.2/vis-network.min.js"></script>
   <script src="kb-cache.js"></script>
   <script src="ai-analysis.js"></script>
   <style>
@@ -173,6 +175,30 @@
     }
     .send-btn:hover { background: var(--teal-dark); }
     .send-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+    /* ── Pipeline Vis.js Graph ────────────────────────────────── */
+    .pipeline-graph-wrap {
+      margin: 10px 0; border: 1px solid var(--border); border-radius: 8px;
+      background: #fafbfc; overflow: hidden;
+    }
+    .pipeline-graph-toolbar {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 6px 12px; background: var(--teal); color: #fff; font-size: 13px; font-weight: 600;
+    }
+    .pipeline-graph-toolbar button {
+      background: none; border: 1px solid rgba(255,255,255,.4); color: #fff; border-radius: 4px;
+      padding: 2px 10px; cursor: pointer; font-size: 12px;
+    }
+    .pipeline-graph-toolbar button:hover { background: rgba(255,255,255,.15); }
+    .pipeline-graph-container { width: 100%; height: 450px; }
+    .pipeline-node-popup {
+      position: absolute; background: #fff; border: 1px solid var(--border); border-radius: 8px;
+      box-shadow: 0 4px 16px rgba(0,0,0,.12); padding: 12px 16px; max-width: 380px;
+      font-size: 12px; z-index: 50; line-height: 1.5;
+    }
+    .pipeline-node-popup h4 { margin: 0 0 6px; color: var(--teal); font-size: 14px; }
+    .pipeline-node-popup pre { background: #f6f6f6; padding: 6px 8px; border-radius: 4px; overflow-x: auto; font-size: 11px; margin: 4px 0; white-space: pre-wrap; }
+    .pipeline-node-popup .close-popup { float: right; cursor: pointer; color: var(--text-muted); font-size: 16px; line-height: 1; }
 
     /* ── Mobile ───────────────────────────────────────────────── */
     @media (max-width: 768px) {
@@ -2148,6 +2174,203 @@ Rules:
   console.log(`[SKILL] Custom Report Excel generated: ${rows.length} rows, ${headers.length} cols, ${(buffer.byteLength/1024).toFixed(0)} KB`);
 }
 
+// ── Pipeline Visualization (Vis.js) ───────────────────────────
+const ACTIVITY_COLORS = {
+  TridentNotebook: '#1C8D7A', Copy: '#0B3052', IfCondition: '#E8A838',
+  ForEach: '#6B4E9B', Office365Email: '#C0392B', Email: '#C0392B',
+  ExecutePipeline: '#2E86C1', SetVariable: '#7F8C8D', Wait: '#7F8C8D',
+  Fail: '#C0392B', Switch: '#E8A838', Lookup: '#2E86C1',
+  WebActivity: '#2E86C1', Script: '#0B3052', _default: '#95A5A6'
+};
+const ACTIVITY_SHAPES = {
+  IfCondition: 'diamond', ForEach: 'box', Switch: 'diamond',
+  Fail: 'triangleDown', _default: 'box'
+};
+
+function findPipelineByName(name) {
+  if (!KB || !KB.workspaces) return null;
+  const q = name.toLowerCase();
+  let best = null;
+  for (const ws of KB.workspaces) {
+    for (const item of (ws.items || [])) {
+      if (item.type !== 'DataPipeline') continue;
+      const dn = (item.displayName || item.name || '').toLowerCase();
+      if (dn === q) return item; // exact match
+      if (dn.includes(q) || q.includes(dn)) best = best || item;
+    }
+  }
+  return best;
+}
+
+function listPipelineNames() {
+  if (!KB || !KB.workspaces) return [];
+  const names = [];
+  for (const ws of KB.workspaces)
+    for (const item of (ws.items || []))
+      if (item.type === 'DataPipeline') names.push(item.displayName || item.name || item.id);
+  return names;
+}
+
+function parsePipelineActivities(item) {
+  const raw = getPipelineContent(item.id);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    // Could be { properties: { activities: [] } } or { activities: [] } or just []
+    if (Array.isArray(parsed)) return parsed;
+    if (parsed.properties && Array.isArray(parsed.properties.activities)) return parsed.properties.activities;
+    if (Array.isArray(parsed.activities)) return parsed.activities;
+    return [];
+  } catch { return []; }
+}
+
+function buildVisGraph(activities) {
+  const nodes = []; const edges = [];
+  activities.forEach((act, i) => {
+    const color = ACTIVITY_COLORS[act.type] || ACTIVITY_COLORS._default;
+    const shape = ACTIVITY_SHAPES[act.type] || ACTIVITY_SHAPES._default;
+    nodes.push({
+      id: act.name, label: act.name, color: { background: color, border: color, highlight: { background: color, border: '#000' } },
+      font: { color: '#fff', size: 13, face: 'Segoe UI' }, shape, margin: 10,
+      title: act.type, _act: act
+    });
+    if (act.dependsOn) for (const dep of act.dependsOn) {
+      const cond = (dep.dependencyConditions || ['Succeeded'])[0];
+      const edgeColor = cond === 'Failed' ? '#C0392B' : cond === 'Skipped' ? '#95A5A6' : '#1C8D7A';
+      edges.push({ from: dep.activity, to: act.name, arrows: 'to', color: { color: edgeColor }, label: cond !== 'Succeeded' ? cond : '', font: { size: 10, color: edgeColor } });
+    }
+    // Nest inner activities for ForEach / IfCondition
+    const inner = act.typeProperties?.activities || act.typeProperties?.ifTrueActivities || [];
+    const innerFalse = act.typeProperties?.ifFalseActivities || [];
+    [...inner, ...innerFalse].forEach(sub => {
+      const sc = ACTIVITY_COLORS[sub.type] || ACTIVITY_COLORS._default;
+      const ss = ACTIVITY_SHAPES[sub.type] || ACTIVITY_SHAPES._default;
+      const subId = `${act.name}/${sub.name}`;
+      nodes.push({ id: subId, label: sub.name, color: { background: sc, border: sc, highlight: { background: sc, border: '#000' } },
+        font: { color: '#fff', size: 12, face: 'Segoe UI' }, shape: ss, margin: 8, title: sub.type, _act: sub,
+        borderWidth: 2, shapeProperties: { borderDashes: [4, 4] }
+      });
+      edges.push({ from: act.name, to: subId, arrows: 'to', dashes: true, color: { color: '#aaa' }, label: innerFalse.includes(sub) ? 'false' : '' });
+    });
+  });
+  return { nodes, edges };
+}
+
+async function visualizePipeline(userText) {
+  // Extract pipeline name from user text
+  const cleaned = userText.replace(/визуализирай\s+pipeline|visualize\s+pipeline|покажи\s+pipeline|нарисувай\s+pipeline|pipeline\s+diagram|pipeline\s+graph|^\/pipeline\s*/gi, '').trim();
+  const pipelineName = cleaned || '';
+
+  if (!KB) { appendMessage('assistant', '⚠️ Knowledge base not loaded yet.'); return; }
+
+  const item = pipelineName ? findPipelineByName(pipelineName) : null;
+  if (!item) {
+    const available = listPipelineNames();
+    if (available.length === 0) {
+      appendMessage('assistant', '⚠️ No DataPipeline items found in the knowledge base.');
+    } else {
+      appendMessage('assistant', `⚠️ Pipeline "${pipelineName || '(not specified)'}" not found.\n\n**Available pipelines:**\n${available.map(n => '- `' + n + '`').join('\n')}\n\nTry: \`визуализирай pipeline ${available[0]}\``);
+    }
+    return;
+  }
+
+  const activities = parsePipelineActivities(item);
+  if (activities.length === 0) {
+    appendMessage('assistant', `⚠️ Pipeline **${item.displayName}** has no activities or its definition is not available in the knowledge base.`);
+    return;
+  }
+
+  const displayName = item.displayName || item.name;
+  const { nodes, edges } = buildVisGraph(activities);
+
+  // Create the message with graph container
+  const msgDiv = document.createElement('div');
+  msgDiv.className = 'message assistant';
+  const label = document.createElement('div');
+  label.className = 'msg-label';
+  label.textContent = 'Assistant';
+  const bubble = document.createElement('div');
+  bubble.className = 'msg-bubble';
+
+  const wrap = document.createElement('div');
+  wrap.className = 'pipeline-graph-wrap';
+
+  const toolbar = document.createElement('div');
+  toolbar.className = 'pipeline-graph-toolbar';
+  toolbar.innerHTML = `<span>📊 ${displayName} — ${activities.length} activities</span>`;
+  const collapseBtn = document.createElement('button');
+  collapseBtn.textContent = '▼ Collapse';
+  toolbar.appendChild(collapseBtn);
+
+  const container = document.createElement('div');
+  container.className = 'pipeline-graph-container';
+  const graphId = 'visGraph_' + Date.now();
+  container.id = graphId;
+
+  wrap.appendChild(toolbar);
+  wrap.appendChild(container);
+  bubble.appendChild(wrap);
+
+  // Legend
+  const legend = document.createElement('div');
+  legend.style.cssText = 'margin-top:8px;font-size:11px;color:var(--text-muted);line-height:1.8;';
+  const legendTypes = [...new Set(activities.map(a => a.type))];
+  legend.innerHTML = legendTypes.map(t => {
+    const c = ACTIVITY_COLORS[t] || ACTIVITY_COLORS._default;
+    return `<span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:${c};vertical-align:middle;margin-right:3px;"></span>${t}`;
+  }).join(' &nbsp; ');
+  bubble.appendChild(legend);
+
+  msgDiv.appendChild(label);
+  msgDiv.appendChild(bubble);
+  chatArea.appendChild(msgDiv);
+  chatArea.scrollTop = chatArea.scrollHeight;
+
+  // Render Vis.js network
+  const network = new vis.Network(container, {
+    nodes: new vis.DataSet(nodes),
+    edges: new vis.DataSet(edges)
+  }, {
+    layout: { hierarchical: { direction: 'LR', sortMethod: 'directed', levelSeparation: 180, nodeSpacing: 100 } },
+    physics: false,
+    interaction: { hover: true, zoomView: true, dragView: true, dragNodes: true },
+    edges: { smooth: { type: 'cubicBezier' } }
+  });
+
+  // Collapse / expand toggle
+  let collapsed = false;
+  collapseBtn.addEventListener('click', () => {
+    collapsed = !collapsed;
+    container.style.display = collapsed ? 'none' : 'block';
+    collapseBtn.textContent = collapsed ? '▶ Expand' : '▼ Collapse';
+  });
+
+  // Node click → popup with activity details
+  network.on('click', params => {
+    document.querySelectorAll('.pipeline-node-popup').forEach(p => p.remove());
+    if (!params.nodes.length) return;
+    const nodeId = params.nodes[0];
+    const node = nodes.find(n => n.id === nodeId);
+    if (!node || !node._act) return;
+    const act = node._act;
+    const popup = document.createElement('div');
+    popup.className = 'pipeline-node-popup';
+    const tp = act.typeProperties || {};
+    let details = `<span class="close-popup">✕</span><h4>${act.name}</h4><p><b>Type:</b> ${act.type}</p>`;
+    if (act.policy) details += `<p><b>Timeout:</b> ${act.policy.timeout || '—'} | <b>Retry:</b> ${act.policy.retry || 0}×</p>`;
+    if (Object.keys(tp).length) details += `<pre>${JSON.stringify(tp, null, 2).slice(0, 600)}</pre>`;
+    if (act.dependsOn && act.dependsOn.length) details += `<p><b>Depends on:</b> ${act.dependsOn.map(d => d.activity).join(', ')}</p>`;
+    popup.innerHTML = details;
+    popup.style.left = (params.event.center.x + container.offsetLeft + 10) + 'px';
+    popup.style.top = (params.event.center.y + container.offsetTop - 20) + 'px';
+    wrap.appendChild(popup);
+    popup.querySelector('.close-popup').addEventListener('click', () => popup.remove());
+  });
+
+  chatHistory.push({ role: 'assistant', content: `[Pipeline visualization: ${displayName} — ${activities.length} activities]` });
+  console.log(`[SKILL] Pipeline visualization rendered: ${displayName}, ${nodes.length} nodes, ${edges.length} edges`);
+}
+
 // ── Skill detection ────────────────────────────────────────────
 function detectSkill(text) {
   const t = text.trim().toLowerCase();
@@ -2159,6 +2382,8 @@ function detectSkill(text) {
     return 'business_glossary';
   if (/^\/report\b/.test(t) || /направи\s+(ми\s+)?справка|custom\s+report|генерирай\s+справка|generate\s+report\s+excel|направи\s+report/i.test(t))
     return 'custom_report';
+  if (/визуализирай\s+pipeline|visualize\s+pipeline|покажи\s+pipeline|нарисувай\s+pipeline|pipeline\s+diagram|pipeline\s+graph|^\/pipeline\b/i.test(t))
+    return 'pipeline_viz';
   return null;
 }
 
@@ -2190,6 +2415,8 @@ async function sendMessage(text) {
         await generateBusinessGlossary();
       } else if (skill === 'custom_report') {
         await generateCustomReportExcel(text);
+      } else if (skill === 'pipeline_viz') {
+        await visualizePipeline(text);
       }
     } catch (err) {
       appendMessage('assistant', '⚠️ Skill error: ' + err.message);
