@@ -239,13 +239,32 @@ function retrieveContext(query) {
     // Search in schemas (values can be array of tables OR object with .tables/.views/.procedures)
     if (KB.schemas) for (const [itemId, val] of Object.entries(KB.schemas)) {
       if (!val) continue;
-      const tblList = Array.isArray(val) ? val : [...(val.tables||[]), ...(val.views||[]), ...(val.procedures||[])];
-      const blob = JSON.stringify(val).toLowerCase();
-      let score = 0;
-      for (const t of tokens) if (blob.includes(t)) score++;
-      if (score > 0) {
-        const label = val.item_type ? `${val.item_type} [${itemId.slice(0,8)}…]` : `Schema [${itemId.slice(0,8)}…]`;
-        chunks.push({ score, text: `${label}: ${tblList.length} tables\nTables: ${tblList.map(t=>t.table_name||t.name||t).join(', ')}\nColumns: ${tblList.flatMap(t=>(t.columns||[])).slice(0,50).map(c=>`${c.column_name||c.name} (${c.data_type||''})`).join(', ')}` });
+      const isWarehouse = !Array.isArray(val) && val.item_type;
+      const tblList = Array.isArray(val) ? val : (val.tables || []);
+
+      // Search tables
+      const tblBlob = JSON.stringify(tblList).toLowerCase();
+      let tblScore = 0;
+      for (const t of tokens) if (tblBlob.includes(t)) tblScore++;
+      if (tblScore > 0) {
+        const label = isWarehouse ? `${val.item_type} [${itemId.slice(0,8)}…]` : `Schema [${itemId.slice(0,8)}…]`;
+        chunks.push({ score: tblScore, text: `${label}: ${tblList.length} tables\nTables: ${tblList.map(t=>t.table_name||t.name||t).join(', ')}\nColumns: ${tblList.flatMap(t=>(t.columns||[])).slice(0,50).map(c=>`${c.column_name||c.name} (${c.data_type||''})`).join(', ')}` });
+      }
+
+      // Search views (Warehouse only)
+      if (isWarehouse && val.views) for (const vw of val.views) {
+        const vwBlob = `${vw.schema||''} ${vw.name||''} ${(vw.definition||'').slice(0,3000)}`.toLowerCase();
+        let score = 0;
+        for (const t of tokens) if (vwBlob.includes(t)) score++;
+        if (score > 0) chunks.push({ score: score + 1, text: `View: [${vw.schema||'dbo'}].[${vw.name}]\nSQL:\n${(vw.definition||'').slice(0, 2000)}` });
+      }
+
+      // Search stored procedures (Warehouse only — critical for lineage)
+      if (isWarehouse && val.procedures) for (const sp of val.procedures) {
+        const spBlob = `${sp.schema||''} ${sp.name||''} ${(sp.definition||'').slice(0,4000)}`.toLowerCase();
+        let score = 0;
+        for (const t of tokens) if (spBlob.includes(t)) score++;
+        if (score > 0) chunks.push({ score: score + 2, text: `Stored Procedure: [${sp.schema||'dbo'}].[${sp.name}] (${sp.type||'PROCEDURE'})\nSQL:\n${(sp.definition||'').slice(0, 2000)}` });
       }
     }
 
