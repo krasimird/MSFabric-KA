@@ -331,7 +331,28 @@ async function startAnalysis() {
 async function retrieveContext(query) {
   if (!KB) return '(No data loaded)';
   try {
-    const tokens = query.toLowerCase().replace(/[^a-z0-9а-яё_]/gi, ' ').split(/\s+/).filter(t => t.length > 2);
+    const queryLower = query.toLowerCase();
+    // Keep compound tokens (underscore-joined field names) AND split into parts
+    const rawTokens = queryLower.replace(/[^a-z0-9а-яё_]/gi, ' ').split(/\s+/).filter(t => t.length > 2);
+    const compoundTokens = rawTokens.filter(t => t.includes('_')); // e.g. "premium_paid_amount_bgn_mode"
+    const splitTokens = rawTokens.flatMap(t => t.includes('_') ? t.split('_').filter(p => p.length > 2) : [t]);
+    const tokens = [...new Set([...compoundTokens, ...splitTokens])]; // deduplicate
+
+    // Detect warehouse/Platinum queries
+    const isWarehouseQuery = /platinum|warehouse|dwh|stored.?proc|sproc|хранилищ/i.test(query);
+    const warehouseBoost = isWarehouseQuery ? 12 : 0;
+
+    console.log(`[RAG] Query: "${query}"`);
+    console.log(`[RAG] Tokens (${tokens.length}): ${tokens.join(', ')}`);
+    console.log(`[RAG] Compound tokens: ${compoundTokens.join(', ') || 'none'}`);
+    console.log(`[RAG] Warehouse query: ${isWarehouseQuery}`);
+    console.log(`[RAG] KNOWLEDGE chunks: ${KNOWLEDGE.length}, analysisReady: ${analysisReady}`);
+    if (KNOWLEDGE.length > 0) {
+      const types = {};
+      for (const c of KNOWLEDGE) types[c.type] = (types[c.type]||0) + 1;
+      console.log('[RAG] Chunk types:', JSON.stringify(types));
+    }
+
     const chunks = [];
 
     // ── Knowledge Base search (pre-built JSONL from server) ────
@@ -339,13 +360,18 @@ async function retrieveContext(query) {
       for (const chunk of KNOWLEDGE) {
         const blob = JSON.stringify(chunk).toLowerCase();
         let score = 0;
-        for (const t of tokens) if (blob.includes(t)) score++;
+
+        // Score compound tokens higher (exact field name match)
+        for (const t of compoundTokens) if (blob.includes(t)) score += 5;
+        // Score split tokens normally
+        for (const t of splitTokens) if (blob.includes(t)) score++;
+
         if (score === 0) continue;
         // Format based on chunk type
         let text = '';
         if (chunk.type === 'field_detail') {
           text = `AI Lineage: ${chunk.table}.${chunk.target_field} ← ${chunk.source_table||'?'}.${chunk.source_column||'?'}\nType: ${chunk.transformation_type||''}\nExpr: ${chunk.expression||''}\nLogic: ${chunk.business_logic||''}`;
-          score += 10; // Boost AI lineage results
+          score += 10;
         } else if (chunk.type === 'table_lineage') {
           text = `Table Summary: ${chunk.id} (${chunk.layer} ${chunk.mode})\nFields: ${chunk.field_count}\nSources: ${chunk.source_tables?.join(', ')||'none'}\nTransformations: ${chunk.transformation_types?.join(', ')||'none'}`;
           score += 8;
@@ -353,15 +379,23 @@ async function retrieveContext(query) {
           text = `Execution Chain: ${chunk.pipeline}\nNotebooks: ${chunk.notebooks?.join(' → ')||'none'}\nAffects: ${chunk.target_tables?.slice(0,10).join(', ')||'none'}`;
           score += 5;
         } else if (chunk.type === 'warehouse_view') {
-          text = `Warehouse View: [${chunk.schema}].[${chunk.name}]\nSQL:\n${(chunk.definition||'').slice(0,2000)}`;
-          score += 3;
+          text = `Warehouse View: [${chunk.schema}].[${chunk.name}]\nSQL:\n${(chunk.definition||'').slice(0,3000)}`;
+          score += 3 + warehouseBoost;
         } else if (chunk.type === 'warehouse_sproc') {
-          text = `Stored Procedure: [${chunk.schema}].[${chunk.name}]\nSQL:\n${(chunk.definition||'').slice(0,2000)}`;
-          score += 4;
+          text = `Stored Procedure: [${chunk.schema}].[${chunk.name}]\nSQL:\n${(chunk.definition||'').slice(0,3000)}`;
+          score += 4 + warehouseBoost;
         } else {
           text = `${chunk.type}: ${chunk.id}\n${JSON.stringify(chunk).slice(0, 500)}`;
         }
-        chunks.push({ score, text });
+        chunks.push({ score, text, type: chunk.type });
+      }
+      // Debug: log top matches by type
+      const matched = {};
+      for (const c of chunks) matched[c.type] = (matched[c.type]||0) + 1;
+      console.log(`[RAG] Matched chunks: ${chunks.length}`, JSON.stringify(matched));
+      if (chunks.length > 0) {
+        chunks.sort((a,b) => b.score - a.score);
+        console.log(`[RAG] Top 5:`, chunks.slice(0,5).map(c => `${c.type} score=${c.score} ${c.text.slice(0,80)}`));
       }
     } else if (analysisReady) {
       // Fallback: search IndexedDB cache
@@ -401,18 +435,20 @@ async function retrieveContext(query) {
 
       // Search views (Warehouse only)
       if (isWarehouse && val.views) for (const vw of val.views) {
-        const vwBlob = `${vw.schema||''} ${vw.name||''} ${(vw.definition||'').slice(0,3000)}`.toLowerCase();
+        const vwBlob = `${vw.schema||''} ${vw.name||''} ${(vw.definition||'').slice(0,4000)}`.toLowerCase();
         let score = 0;
-        for (const t of tokens) if (vwBlob.includes(t)) score++;
-        if (score > 0) chunks.push({ score: score + 1, text: `View: [${vw.schema||'dbo'}].[${vw.name}]\nSQL:\n${(vw.definition||'').slice(0, 2000)}` });
+        for (const t of compoundTokens) if (vwBlob.includes(t)) score += 5;
+        for (const t of splitTokens) if (vwBlob.includes(t)) score++;
+        if (score > 0) chunks.push({ score: score + 1 + warehouseBoost, text: `View: [${vw.schema||'dbo'}].[${vw.name}]\nSQL:\n${(vw.definition||'').slice(0, 3000)}`, type: 'raw_view' });
       }
 
       // Search stored procedures (Warehouse only — critical for lineage)
       if (isWarehouse && val.procedures) for (const sp of val.procedures) {
         const spBlob = `${sp.schema||''} ${sp.name||''} ${(sp.definition||'').slice(0,4000)}`.toLowerCase();
         let score = 0;
-        for (const t of tokens) if (spBlob.includes(t)) score++;
-        if (score > 0) chunks.push({ score: score + 2, text: `Stored Procedure: [${sp.schema||'dbo'}].[${sp.name}] (${sp.type||'PROCEDURE'})\nSQL:\n${(sp.definition||'').slice(0, 2000)}` });
+        for (const t of compoundTokens) if (spBlob.includes(t)) score += 5;
+        for (const t of splitTokens) if (spBlob.includes(t)) score++;
+        if (score > 0) chunks.push({ score: score + 2 + warehouseBoost, text: `Stored Procedure: [${sp.schema||'dbo'}].[${sp.name}] (${sp.type||'PROCEDURE'})\nSQL:\n${(sp.definition||'').slice(0, 3000)}`, type: 'raw_sproc' });
       }
     }
 
@@ -433,11 +469,13 @@ async function retrieveContext(query) {
     }
 
     chunks.sort((a, b) => b.score - a.score);
-    let ctx = '', budget = 12000;
+    // Increase budget for warehouse queries (sproc definitions are large)
+    let ctx = '', budget = isWarehouseQuery ? 16000 : 12000;
     for (const c of chunks) {
-      if (ctx.length + c.text.length > budget) break;
+      if (ctx.length + c.text.length > budget) { if (ctx.length > 0) break; }
       ctx += c.text + '\n---\n';
     }
+    console.log(`[RAG] Final context: ${ctx.length} chars, ${chunks.length} chunks considered`);
     return ctx || '(No matching context found for this query)';
   } catch (err) {
     console.error('retrieveContext error:', err);
@@ -452,12 +490,15 @@ Your knowledge comes from the CONTEXT section below, which contains real metadat
 
 When "AI Lineage" entries are present in the context, these are pre-analyzed field-level lineage results. Prefer them over raw SQL — they contain resolved source tables, transformation types, and business logic explanations.
 
+When "Stored Procedure" entries are present, these contain the actual SQL definitions from the Platinum (Warehouse) layer. For Platinum/DWH lineage questions, these are the PRIMARY source of truth — they show exactly how fields are mapped from Gold layer tables into the Warehouse.
+
 Rules:
 - Answer in the SAME LANGUAGE as the question (Bulgarian or English)
 - Cite specific table names, column names, SQL expressions, DAX measures from the context
 - If the information is NOT in the context, say so explicitly — do not guess
 - Use Markdown formatting: headers, bullet lists, code blocks, tables
 - For lineage questions, trace data flow: source → transformations → target
+- For Platinum/Warehouse fields, show the column mapping from the stored procedure SQL (e.g. [source_col] AS target_col)
 - Be concise but thorough`;
 
 // ── Chat logic ─────────────────────────────────────────────────
