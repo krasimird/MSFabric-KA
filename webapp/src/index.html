@@ -148,8 +148,8 @@
       <button class="quick-btn" data-q="What tables are in the platform and how are they organized?">📋 Platform overview</button>
       <button class="quick-btn" data-q="Show me all pipelines and their activities">🔄 Pipeline summary</button>
       <button class="quick-btn" data-q="What stored procedures exist in the warehouses?">🏭 Warehouse procedures</button>
-      <button class="quick-btn" data-q="What DAX measures are defined in the semantic models?">📐 DAX measures</button>
-      <button class="quick-btn" data-q="List all notebooks and what they do">📓 Notebooks</button>
+      <button class="quick-btn" data-q="Генерирай Data Lineage Excel">📥 Generate Data Lineage Excel</button>
+      <button class="quick-btn" data-q="Генерирай Data Dictionary Excel">📥 Generate Data Dictionary</button>
     </div>
     <div class="analysis-section" id="analysisSection" style="display:none;">
       <h3>🧠 AI Analysis</h3>
@@ -773,89 +773,216 @@ function styleTitleRow(ws, title, colSpan) {
   ws.getRow(1).height = 36;
 }
 
-// ── Collect table data for Excel ──────────────────────────────
-function collectTablesForExcel() {
-  const zones = { Bronze: [], Silver: [], Gold: [], Platinum: [] };
+// ── Layer sub-header colors for Excel ─────────────────────────
+const LAYER_COLORS = {
+  Platinum: 'E5E4E2', Gold: 'FFF8DC', Silver_Stg: 'F0F0F0',
+  Silver_Raw: 'F0F0F0', Bronze: 'F5E6CC',
+};
 
-  // Build a map of table_lineage chunks by table name (lowercase)
+// ── Collect table data for Excel (5-zone split) ──────────────
+function collectTablesForExcel() {
+  const zones = { Platinum: [], Gold: [], Silver_Stg: [], Silver_Raw: [], Bronze: [] };
+
+  // Index: table_lineage and field_detail by table name (lowercase)
   const lineageMap = {};
-  const fieldMap = {}; // table_lower → [field_detail chunks]
+  const fieldMap = {};
   for (const chunk of KNOWLEDGE) {
-    if (chunk.type === 'table_lineage') {
-      lineageMap[chunk.id?.toLowerCase()] = chunk;
-    }
+    if (chunk.type === 'table_lineage') lineageMap[chunk.id?.toLowerCase()] = chunk;
     if (chunk.type === 'field_detail') {
       const key = chunk.table?.toLowerCase();
-      if (key) { if (!fieldMap[key]) fieldMap[key] = []; fieldMap[key].push(chunk); }
+      if (key) { (fieldMap[key] ||= []).push(chunk); }
     }
   }
 
-  // Bronze tables from bronze_meta
+  // Bronze
   if (KB?.metadata?.bronze_meta) {
     const bronzeByTable = {};
     for (const bm of KB.metadata.bronze_meta) {
       const tbl = bm.target_table || 'unknown';
-      if (!bronzeByTable[tbl]) bronzeByTable[tbl] = { name: tbl, source: `${bm.source_schema||''}.${bm.source_table||''}`, columns: [], fields: [] };
+      if (!bronzeByTable[tbl]) bronzeByTable[tbl] = {
+        name: tbl, source: `${bm.source_schema||''}.${bm.source_table||''}`,
+        columns: [], active: bm.is_active || 'true',
+      };
       bronzeByTable[tbl].source = `${bm.source_schema||''}.${bm.source_table||''}`;
+      bronzeByTable[tbl].active = bm.is_active || 'true';
     }
-    // Enrich with schema columns
-    if (KB.schemas) for (const [itemId, val] of Object.entries(KB.schemas)) {
+    if (KB.schemas) for (const [, val] of Object.entries(KB.schemas)) {
       if (Array.isArray(val)) for (const tbl of val) {
-        const tblName = tbl.table_name || tbl.name || '';
-        if (bronzeByTable[tblName]) bronzeByTable[tblName].columns = tbl.columns || [];
+        const nm = tbl.table_name || tbl.name || '';
+        if (bronzeByTable[nm]) bronzeByTable[nm].columns = tbl.columns || [];
       }
     }
     zones.Bronze = Object.values(bronzeByTable);
   }
 
-  // Silver + Gold tables from KNOWLEDGE (table_lineage)
+  // Silver (split Staging vs Raw) + Gold
   for (const chunk of KNOWLEDGE) {
     if (chunk.type !== 'table_lineage') continue;
     const layer = (chunk.layer || '').toLowerCase();
+    const tblName = chunk.id || 'unknown';
     const entry = {
-      name: chunk.id || 'unknown',
+      name: tblName,
       source: (chunk.source_tables || []).join(', '),
       fieldCount: chunk.field_count || 0,
-      fields: fieldMap[chunk.id?.toLowerCase()] || [],
+      fields: fieldMap[tblName.toLowerCase()] || [],
     };
-    if (layer.includes('silver')) zones.Silver.push(entry);
-    else if (layer.includes('gold')) zones.Gold.push(entry);
+    if (layer.includes('gold')) {
+      zones.Gold.push(entry);
+    } else if (layer.includes('silver')) {
+      if (tblName.startsWith('stg_')) zones.Silver_Stg.push(entry);
+      else zones.Silver_Raw.push(entry);
+    }
   }
 
-  // Platinum from warehouse_sproc/warehouse_view chunks
-  // Build warehouse_id → name mapping from KB workspace items
+  // Platinum — warehouse_sproc / warehouse_view
   const whNameMap = {};
   if (KB?.workspaces) {
-    for (const ws of KB.workspaces) {
-      for (const item of (ws.items || [])) {
+    for (const ws of KB.workspaces)
+      for (const item of (ws.items || []))
         if (item.type === 'Warehouse') whNameMap[item.id] = item.displayName || item.id;
+  }
+  for (const chunk of KNOWLEDGE) {
+    if (chunk.type !== 'warehouse_sproc' && chunk.type !== 'warehouse_view') continue;
+    const whName = chunk.warehouse_name || whNameMap[chunk.warehouse_id] || '';
+    const prefix = whName ? `${whName}.` : '';
+    zones.Platinum.push({
+      name: `${prefix}${chunk.schema||'dbo'}.${chunk.name}`,
+      source: chunk.type === 'warehouse_sproc' ? 'Stored Procedure' : 'View',
+      fieldCount: 0,
+      definition: chunk.definition || '',
+      chunkType: chunk.type,
+    });
+  }
+
+  for (const z of Object.keys(zones)) zones[z].sort((a, b) => a.name.localeCompare(b.name));
+  return { zones, fieldMap, lineageMap };
+}
+
+// ── Trace lineage chain downward from a given table ──────────
+function traceTableChain(tableName, startLayer, fieldMap) {
+  const chain = [];
+  // Collect fields for this table
+  const fields = fieldMap[tableName.toLowerCase()] || [];
+  // Find downstream source tables
+  const sourceTables = new Set();
+  for (const f of fields) { if (f.source_table) sourceTables.add(f.source_table); }
+
+  if (startLayer === 'Platinum') {
+    // Platinum doesn't have field_detail — parse definition in the caller
+    return chain; // handled separately
+  }
+
+  // Current layer fields
+  if (fields.length > 0) chain.push({ layer: startLayer, table: tableName, fields });
+
+  // Trace to next layer down
+  const nextLayer = startLayer === 'Gold' ? 'Silver' : startLayer.startsWith('Silver') ? 'Bronze' : null;
+  if (!nextLayer) return chain;
+
+  if (nextLayer === 'Bronze' && KB?.metadata?.bronze_meta) {
+    const bronzeHits = [];
+    for (const src of sourceTables) {
+      const srcLower = src.toLowerCase().replace(/^.*\./, '');
+      for (const bm of KB.metadata.bronze_meta) {
+        if ((bm.target_table || '').toLowerCase().includes(srcLower) ||
+            srcLower.includes((bm.target_table || '').toLowerCase())) {
+          const key = `${bm.source_schema}.${bm.source_table}→${bm.target_table}`;
+          if (!bronzeHits.some(b => `${b.source_schema}.${b.source_table}→${b.target_table}` === key))
+            bronzeHits.push(bm);
+        }
+      }
+    }
+    if (bronzeHits.length > 0) chain.push({ layer: 'Bronze', table: '(source systems)', bronzeMeta: bronzeHits });
+  } else if (nextLayer === 'Silver') {
+    for (const src of sourceTables) {
+      const srcLower = src.toLowerCase().replace(/^.*\./, '');
+      const silverFields = fieldMap[srcLower] || [];
+      if (silverFields.length > 0) {
+        chain.push({ layer: 'Silver', table: src, fields: silverFields });
+        // Trace Silver → Bronze
+        const silverSources = new Set();
+        for (const f of silverFields) { if (f.source_table) silverSources.add(f.source_table); }
+        if (KB?.metadata?.bronze_meta) {
+          const bronzeHits = [];
+          for (const ss of silverSources) {
+            const ssLower = ss.toLowerCase().replace(/^.*\./, '');
+            for (const bm of KB.metadata.bronze_meta) {
+              if ((bm.target_table || '').toLowerCase().includes(ssLower) ||
+                  ssLower.includes((bm.target_table || '').toLowerCase())) {
+                const key = `${bm.source_schema}.${bm.source_table}→${bm.target_table}`;
+                if (!bronzeHits.some(b => `${b.source_schema}.${b.source_table}→${b.target_table}` === key))
+                  bronzeHits.push(bm);
+              }
+            }
+          }
+          if (bronzeHits.length > 0) chain.push({ layer: 'Bronze', table: '(source systems)', bronzeMeta: bronzeHits });
+        }
       }
     }
   }
-  for (const chunk of KNOWLEDGE) {
-    if (chunk.type === 'warehouse_sproc' || chunk.type === 'warehouse_view') {
-      const whName = chunk.warehouse_name || whNameMap[chunk.warehouse_id] || '';
-      const prefix = whName ? `${whName}.` : '';
-      zones.Platinum.push({
-        name: `${prefix}${chunk.schema||'dbo'}.${chunk.name}`,
-        source: chunk.type === 'warehouse_sproc' ? 'Stored Procedure' : 'View',
-        fieldCount: 0,
-        definition: chunk.definition || '',
-        chunkType: chunk.type,
-      });
-    }
-  }
-
-  // Sort each zone
-  for (const z of Object.keys(zones)) zones[z].sort((a, b) => a.name.localeCompare(b.name));
-
-  return { zones, fieldMap };
+  return chain;
 }
 
-// ── Generate Data Lineage Excel ───────────────────────────────
+// ── Write layer sub-header row ────────────────────────────────
+function writeLayerHeader(ws, row, label, colSpan, colorArgb) {
+  ws.mergeCells(row, 1, row, colSpan);
+  const cell = ws.getRow(row).getCell(1);
+  cell.value = label;
+  cell.font = { name: 'Calibri Light', size: 12, bold: true };
+  cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: colorArgb } };
+  cell.alignment = { vertical: 'middle' };
+  ws.getRow(row).height = 26;
+}
+
+// ── Write field lineage rows into a detail sheet ─────────────
+function writeFieldRows(ws, startRow, fields, colSpan) {
+  const hdr = ws.getRow(startRow);
+  ['#','Target Field','Data Type','Source Table','Source Column','Transformation','SQL Expression']
+    .forEach((h, i) => { hdr.getCell(i+1).value = h; });
+  styleHeader(hdr, colSpan);
+  let r = startRow + 1;
+  for (let i = 0; i < fields.length; i++) {
+    const f = fields[i]; const row = ws.getRow(r);
+    row.getCell(1).value = i+1;
+    row.getCell(2).value = f.target_field || '';
+    row.getCell(3).value = f.data_type || '';
+    row.getCell(4).value = f.source_table || '';
+    row.getCell(5).value = f.source_column || '';
+    row.getCell(6).value = f.transformation_type || '';
+    row.getCell(7).value = (f.expression || '').slice(0,500);
+    styleDataRow(row, colSpan, r - startRow - 1, [7]);
+    const tc = TRANSFORM_COLORS[(f.transformation_type||'').toLowerCase()];
+    if (tc) row.getCell(6).fill = { type:'pattern', pattern:'solid', fgColor:{ argb: tc } };
+    r++;
+  }
+  if (fields.length === 0) { ws.getRow(startRow+1).getCell(1).value = '(No field lineage data)'; r++; }
+  return r;
+}
+
+// ── Write Bronze meta rows into a detail sheet ───────────────
+function writeBronzeRows(ws, startRow, bronzeMeta, colSpan) {
+  const hdr = ws.getRow(startRow);
+  ['#','Source Schema','Source Table','Target Table','Active','','']
+    .forEach((h, i) => { hdr.getCell(i+1).value = h; });
+  styleHeader(hdr, colSpan);
+  let r = startRow + 1;
+  for (let i = 0; i < bronzeMeta.length; i++) {
+    const bm = bronzeMeta[i]; const row = ws.getRow(r);
+    row.getCell(1).value = i+1;
+    row.getCell(2).value = bm.source_schema || '';
+    row.getCell(3).value = bm.source_table || '';
+    row.getCell(4).value = bm.target_table || '';
+    row.getCell(5).value = bm.is_active || '';
+    styleDataRow(row, colSpan, r - startRow - 1);
+    r++;
+  }
+  if (bronzeMeta.length === 0) { ws.getRow(startRow+1).getCell(1).value = '(No Bronze mapping)'; r++; }
+  return r;
+}
+
+// ── Generate Data Lineage Excel (v2 — full chain) ────────────
 async function generateLineageExcel() {
   if (!KB) { appendMessage('assistant', '⚠️ No data loaded — cannot generate Excel.'); return; }
-
   const progressDiv = document.createElement('div');
   progressDiv.className = 'message assistant';
   progressDiv.innerHTML = '<div class="msg-label">Assistant</div><div class="msg-bubble" id="excelProgress">📊 <b>Generating Data Lineage Excel...</b><br></div>';
@@ -863,159 +990,245 @@ async function generateLineageExcel() {
   chatArea.scrollTop = chatArea.scrollHeight;
   const progEl = document.getElementById('excelProgress');
   const log = (msg) => { progEl.innerHTML += msg + '<br>'; chatArea.scrollTop = chatArea.scrollHeight; };
+  await new Promise(r => setTimeout(r, 50));
 
-  await new Promise(r => setTimeout(r, 50)); // let UI render
-
-  const { zones } = collectTablesForExcel();
+  const { zones, fieldMap } = collectTablesForExcel();
   const wb = new ExcelJS.Workbook();
   wb.creator = 'GenDWH Knowledge Assistant';
   wb.created = new Date();
   const usedNames = new Set();
-  const zoneSheetNames = {};
-  const detailSheetMap = {}; // tableName → sheetName
-
-  // ── INDEX sheet ──────────────────────────────────────────────
-  log('Creating INDEX sheet...');
-  const idxWs = wb.addWorksheet(safeName('INDEX', usedNames));
-  styleTitleRow(idxWs, 'GenDWH Data Lineage', 4);
-  idxWs.getCell('A2').value = `Generated: ${new Date().toISOString().slice(0,10)}`;
-  idxWs.getCell('A2').font = { name: 'Calibri', size: 10, italic: true, color: { argb: '666666' } };
-
-  const idxHeaders = ['Zone', 'Tables', 'Description', 'Navigate'];
-  const idxHeaderRow = idxWs.getRow(4);
-  idxHeaders.forEach((h, i) => { idxHeaderRow.getCell(i+1).value = h; });
-  styleHeader(idxHeaderRow, 4);
-
-  const zoneDescriptions = {
-    Bronze: 'Landing / 1:1 copy from source systems',
-    Silver: 'Cleansed, enriched, IFRS staging (SCD1)',
-    Gold: 'Business-ready aggregations (SCD2)',
-    Platinum: 'Warehouse views & stored procedures',
+  const catNames = {};   // zone → catalog sheet name
+  const detailMap = {};   // zone::table → detail sheet name
+  const COL_SPAN = 7;
+  const zoneLabels = {
+    Platinum: 'Platinum — Warehouse Procedures & Views',
+    Gold: 'Gold — Business-Ready Aggregations',
+    Silver_Stg: 'Silver Staging — Cleansed & Enriched',
+    Silver_Raw: 'Silver Raw — Initial Transformations',
+    Bronze: 'Bronze — Landing / Source Copy',
   };
-  let idxRow = 5;
-  for (const [zone, tables] of Object.entries(zones)) {
-    // Create zone sheet first so we can link to it
-    const zoneSheetName = safeName(zone, usedNames);
-    zoneSheetNames[zone] = zoneSheetName;
-    const r = idxWs.getRow(idxRow);
-    r.getCell(1).value = zone;
-    r.getCell(1).font = { name: 'Calibri', size: 11, bold: true };
-    r.getCell(2).value = tables.length;
-    r.getCell(3).value = zoneDescriptions[zone] || '';
-    r.getCell(4).value = { text: `→ ${zone}`, hyperlink: `#'${zoneSheetName}'!A1` };
-    r.getCell(4).font = { name: 'Calibri', size: 10, color: { argb: TEAL }, underline: true };
-    styleDataRow(r, 4, idxRow - 5);
-    idxRow++;
+  const zoneDesc = {
+    Platinum: 'Warehouse stored procedures and views',
+    Gold: 'Business-ready dim_/fact_ tables (SCD2)',
+    Silver_Stg: 'Staging tables (stg_*) — cleansed, IFRS',
+    Silver_Raw: 'Raw tables — initial transformations',
+    Bronze: 'Landing / 1:1 copy from source systems',
+  };
+  const totalTables = Object.values(zones).reduce((s, z) => s + z.length, 0);
+  const totalFields = Object.values(fieldMap).reduce((s, arr) => s + arr.length, 0);
+
+  // ── Sheet 1: TITLE PAGE ───────────────────────────────────
+  log('Creating Title page...');
+  const titleWs = wb.addWorksheet(safeName('Title', usedNames));
+  titleWs.mergeCells('A1:G1');
+  const tc = titleWs.getCell('A1');
+  tc.value = 'GenDWH Data Lineage';
+  tc.font = { name: 'Calibri Light', size: 28, bold: true, color: { argb: WHITE } };
+  tc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: TEAL } };
+  tc.alignment = { vertical: 'middle', horizontal: 'center' };
+  titleWs.getRow(1).height = 56;
+  titleWs.getCell('A3').value = `Generated: ${new Date().toISOString().slice(0,10)}`;
+  titleWs.getCell('A3').font = { name: 'Calibri', size: 11, italic: true, color: { argb: '666666' } };
+  titleWs.getCell('A5').value = 'Summary';
+  titleWs.getCell('A5').font = { name: 'Calibri Light', size: 14, bold: true, color: { argb: TEAL } };
+  let tRow = 6;
+  for (const [z, tbls] of Object.entries(zones)) {
+    titleWs.getCell(`A${tRow}`).value = zoneLabels[z] || z;
+    titleWs.getCell(`A${tRow}`).font = { name: 'Calibri', size: 10 };
+    titleWs.getCell(`C${tRow}`).value = `${tbls.length} tables`;
+    titleWs.getCell(`C${tRow}`).font = { name: 'Calibri', size: 10, bold: true };
+    tRow++;
   }
-  idxWs.columns = [{ width: 15 }, { width: 10 }, { width: 50 }, { width: 15 }];
+  titleWs.getCell(`A${tRow+1}`).value = `Total: ${totalTables} tables, ${totalFields} fields analyzed`;
+  titleWs.getCell(`A${tRow+1}`).font = { name: 'Calibri', size: 11, bold: true, color: { argb: TEAL } };
+  titleWs.getCell(`A${tRow+3}`).value = 'InspirIT — GenDWH Knowledge Assistant';
+  titleWs.getCell(`A${tRow+3}`).font = { name: 'Calibri Light', size: 10, italic: true, color: { argb: '999999' } };
+  titleWs.columns = [{ width: 20 },{ width: 15 },{ width: 15 },{ width: 15 },{ width: 15 },{ width: 15 },{ width: 15 }];
+
+  // ── Sheet 2: INDEX ────────────────────────────────────────
+  log('Creating INDEX...');
+  const idxWs = wb.addWorksheet(safeName('INDEX', usedNames));
+  styleTitleRow(idxWs, 'Data Lineage — Zone Index', 5);
+  addBackLink(idxWs, 'Title', 'Back to Title');
+  const idxHdr = idxWs.getRow(4);
+  ['Zone','Tables','Description','','Navigate'].forEach((h,i) => { idxHdr.getCell(i+1).value = h; });
+  styleHeader(idxHdr, 5);
+  let iRow = 5;
+  for (const [zone, tbls] of Object.entries(zones)) {
+    const catName = safeName(zone.replace('_',' '), usedNames);
+    catNames[zone] = catName;
+    const r = idxWs.getRow(iRow);
+    r.getCell(1).value = zone.replace('_',' ');
+    r.getCell(1).font = { name: 'Calibri', size: 11, bold: true };
+    r.getCell(2).value = tbls.length;
+    r.getCell(3).value = zoneDesc[zone] || '';
+    r.getCell(5).value = { text: `→ ${zone.replace('_',' ')}`, hyperlink: `#'${catName}'!A1` };
+    r.getCell(5).font = { name: 'Calibri', size: 10, color: { argb: TEAL }, underline: true };
+    styleDataRow(r, 5, iRow - 5);
+    iRow++;
+  }
+  idxWs.columns = [{ width: 18 },{ width: 10 },{ width: 44 },{ width: 2 },{ width: 18 }];
+  idxWs.views = [{ state: 'frozen', ySplit: 4 }];
   await new Promise(r => setTimeout(r, 10));
 
-  // ── Zone sheets + detail sheets ─────────────────────────────
+  // ── Catalog sheets (one per zone) + pre-register detail names ─
   for (const [zone, tables] of Object.entries(zones)) {
-    log(`Creating ${zone} zone (${tables.length} tables)...`);
-    const zoneWs = wb.addWorksheet(zoneSheetNames[zone]);
-    styleTitleRow(zoneWs, `${zone} Layer — Data Lineage`, 5);
-    addBackLink(zoneWs, 'INDEX', 'Back to INDEX');
+    log(`Creating ${zone.replace('_',' ')} catalog (${tables.length} tables)...`);
+    const catWs = wb.addWorksheet(catNames[zone]);
+    styleTitleRow(catWs, zoneLabels[zone] || zone, 5);
+    addBackLink(catWs, 'INDEX', 'Back to INDEX');
 
-    // Zone header row
-    const zHeaders = ['#', 'Table Name', 'Fields', 'Source Tables', 'Navigate'];
-    const zHeaderRow = zoneWs.getRow(4);
-    zHeaders.forEach((h, i) => { zHeaderRow.getCell(i+1).value = h; });
-    styleHeader(zHeaderRow, 5);
+    const isBronze = zone === 'Bronze';
+    const headers = isBronze
+      ? ['#','Table Name','Source System Table','Columns','Active']
+      : ['#','Name', zone==='Platinum' ? 'Type' : 'Fields','Source Tables','→ Detail'];
+    const hRow = catWs.getRow(4);
+    headers.forEach((h,i) => { hRow.getCell(i+1).value = h; });
+    styleHeader(hRow, 5);
 
-    let zRow = 5;
+    let cRow = 5;
     for (let ti = 0; ti < tables.length; ti++) {
       const tbl = tables[ti];
-      // Create detail sheet — use zone+name as key to avoid cross-zone collisions
-      const detailName = safeName(tbl.name, usedNames);
-      const detailKey = zone + '::' + tbl.name;
-      detailSheetMap[detailKey] = detailName;
-
-      const r = zoneWs.getRow(zRow);
+      const r = catWs.getRow(cRow);
       r.getCell(1).value = ti + 1;
       r.getCell(2).value = tbl.name;
-      r.getCell(3).value = tbl.fieldCount || tbl.columns?.length || tbl.fields?.length || 0;
-      r.getCell(4).value = tbl.source || '';
-      r.getCell(5).value = { text: '→ Detail', hyperlink: `#'${detailSheetMap[detailKey]}'!A1` };
-      r.getCell(5).font = { name: 'Calibri', size: 10, color: { argb: TEAL }, underline: true };
-      styleDataRow(r, 5, zRow - 5, [4]);
-      zRow++;
-    }
-    zoneWs.columns = [{ width: 6 }, { width: 40 }, { width: 8 }, { width: 50 }, { width: 12 }];
-    zoneWs.views = [{ state: 'frozen', ySplit: 4 }];
 
-    // ── Detail sheets ────────────────────────────────────────
-    for (const tbl of tables) {
-      const detailKey = zone + '::' + tbl.name;
-      const dWs = wb.addWorksheet(detailSheetMap[detailKey]);
-      styleTitleRow(dWs, tbl.name, 7);
-      addBackLink(dWs, zoneSheetNames[zone], `Back to ${zone}`);
-
-      if (zone === 'Bronze') {
-        // Bronze: just show columns from schema
-        const cols = tbl.columns || [];
-        const dHeaders = ['#', 'Column Name', 'Data Type', 'Source Table'];
-        const dHeaderRow = dWs.getRow(4);
-        dHeaders.forEach((h, i) => { dHeaderRow.getCell(i+1).value = h; });
-        styleHeader(dHeaderRow, 4);
-        let dRow = 5;
-        for (let ci = 0; ci < cols.length; ci++) {
-          const c = cols[ci];
-          const r = dWs.getRow(dRow);
-          r.getCell(1).value = ci + 1;
-          r.getCell(2).value = c.column_name || c.name || '';
-          r.getCell(3).value = c.data_type || '';
-          r.getCell(4).value = tbl.source || '';
-          styleDataRow(r, 4, dRow - 5);
-          dRow++;
-        }
-        if (cols.length === 0) { dWs.getRow(5).getCell(1).value = '(No column data available)'; }
-        dWs.columns = [{ width: 6 }, { width: 35 }, { width: 20 }, { width: 40 }];
-      } else if (zone === 'Platinum') {
-        // Platinum: show definition (sproc/view SQL)
-        const dHeaders = ['Property', 'Value'];
-        const dHeaderRow = dWs.getRow(4);
-        dHeaders.forEach((h, i) => { dHeaderRow.getCell(i+1).value = h; });
-        styleHeader(dHeaderRow, 2);
-        dWs.getRow(5).getCell(1).value = 'Type';
-        dWs.getRow(5).getCell(2).value = tbl.chunkType === 'warehouse_sproc' ? 'Stored Procedure' : 'View';
-        styleDataRow(dWs.getRow(5), 2, 0);
-        dWs.getRow(6).getCell(1).value = 'SQL Definition';
-        dWs.getRow(6).getCell(2).value = (tbl.definition || '').slice(0, 8000);
-        dWs.getRow(6).getCell(2).font = { name: 'Courier New', size: 9 };
-        dWs.getRow(6).getCell(2).alignment = { wrapText: true, vertical: 'top' };
-        styleDataRow(dWs.getRow(6), 2, 1, [2]);
-        dWs.columns = [{ width: 18 }, { width: 120 }];
+      if (isBronze) {
+        r.getCell(3).value = tbl.source || '';
+        r.getCell(4).value = tbl.columns?.length || 0;
+        r.getCell(5).value = tbl.active || '';
       } else {
-        // Silver / Gold: field-level lineage from KNOWLEDGE
-        const fields = tbl.fields || [];
-        const dHeaders = ['#', 'Target Field', 'Data Type', 'Source Table', 'Source Column', 'Transformation', 'SQL Expression'];
-        const dHeaderRow = dWs.getRow(4);
-        dHeaders.forEach((h, i) => { dHeaderRow.getCell(i+1).value = h; });
-        styleHeader(dHeaderRow, 7);
-        let dRow = 5;
-        for (let fi = 0; fi < fields.length; fi++) {
-          const f = fields[fi];
-          const r = dWs.getRow(dRow);
-          r.getCell(1).value = fi + 1;
-          r.getCell(2).value = f.target_field || '';
-          r.getCell(3).value = f.data_type || '';
-          r.getCell(4).value = f.source_table || '';
-          r.getCell(5).value = f.source_column || '';
-          r.getCell(6).value = f.transformation_type || '';
-          r.getCell(7).value = (f.expression || '').slice(0, 500);
-          styleDataRow(r, 7, dRow - 5, [7]);
-          // Transformation badge color
-          const tc = TRANSFORM_COLORS[(f.transformation_type || '').toLowerCase()];
-          if (tc) r.getCell(6).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: tc } };
-          dRow++;
+        if (zone === 'Platinum') {
+          r.getCell(3).value = tbl.source || '';  // Procedure/View
+        } else {
+          r.getCell(3).value = tbl.fieldCount || tbl.fields?.length || 0;
         }
-        if (fields.length === 0) { dWs.getRow(5).getCell(1).value = '(No field lineage data available)'; }
-        dWs.columns = [{ width: 5 }, { width: 30 }, { width: 15 }, { width: 30 }, { width: 25 }, { width: 16 }, { width: 50 }];
+        r.getCell(4).value = tbl.source || '';
+        // Pre-register detail sheet name
+        const dk = zone + '::' + tbl.name;
+        detailMap[dk] = safeName(tbl.name, usedNames);
+        r.getCell(5).value = { text: '→ Detail', hyperlink: `#'${detailMap[dk]}'!A1` };
+        r.getCell(5).font = { name: 'Calibri', size: 10, color: { argb: TEAL }, underline: true };
       }
+      styleDataRow(r, 5, cRow - 5);
+      cRow++;
+    }
+    catWs.columns = [{ width: 6 },{ width: 42 },{ width: 16 },{ width: 44 },{ width: 12 }];
+    catWs.views = [{ state: 'frozen', ySplit: 4 }];
+    await new Promise(r => setTimeout(r, 10));
+  }
+
+  // ── Detail sheets (full chain) — skip Bronze ──────────────
+  let detailCount = 0;
+  for (const [zone, tables] of Object.entries(zones)) {
+    if (zone === 'Bronze') continue;  // Bronze has no detail sheets
+    for (let ti = 0; ti < tables.length; ti++) {
+      const tbl = tables[ti];
+      const dk = zone + '::' + tbl.name;
+      if (!detailMap[dk]) continue;
+      detailCount++;
+      if (detailCount % 20 === 0) {
+        log(`Creating detail sheet ${detailCount}...`);
+        await new Promise(r => setTimeout(r, 0));
+      }
+
+      const dWs = wb.addWorksheet(detailMap[dk]);
+      styleTitleRow(dWs, tbl.name, COL_SPAN);
+      addBackLink(dWs, catNames[zone], `Back to ${zone.replace('_',' ')}`);
+      let row = 4;
+
+      if (zone === 'Platinum') {
+        // === PLATINUM SECTION ===
+        writeLayerHeader(dWs, row, '═══ PLATINUM — Warehouse Definition ═══', COL_SPAN, LAYER_COLORS.Platinum);
+        row++;
+        const pHdr = dWs.getRow(row);
+        ['Property','Value','','','','',''].forEach((h,i) => { pHdr.getCell(i+1).value = h; });
+        styleHeader(pHdr, COL_SPAN);
+        row++;
+        dWs.getRow(row).getCell(1).value = 'Type';
+        dWs.getRow(row).getCell(2).value = tbl.chunkType === 'warehouse_sproc' ? 'Stored Procedure' : 'View';
+        styleDataRow(dWs.getRow(row), COL_SPAN, 0); row++;
+        dWs.getRow(row).getCell(1).value = 'SQL Definition';
+        dWs.getRow(row).getCell(2).value = (tbl.definition || '').slice(0, 8000);
+        dWs.getRow(row).getCell(2).font = { name: 'Courier New', size: 9 };
+        dWs.getRow(row).getCell(2).alignment = { wrapText: true, vertical: 'top' };
+        styleDataRow(dWs.getRow(row), COL_SPAN, 1, [2]); row++;
+
+        // Parse definition for FROM tables → trace to Gold
+        const def = tbl.definition || '';
+        const fromMatches = [...def.matchAll(/FROM\s+(?:\[?[\w]+\]?\.)?(?:\[?[\w]+\]?\.)?\[?([\w]+)\]?/gi)];
+        const goldSrcTables = [...new Set(fromMatches.map(m => m[1].toLowerCase()))];
+        row++;
+        for (const goldTbl of goldSrcTables) {
+          const gFields = fieldMap[goldTbl] || [];
+          if (gFields.length === 0) continue;
+          writeLayerHeader(dWs, row, `═══ GOLD — ${goldTbl} ═══`, COL_SPAN, LAYER_COLORS.Gold);
+          row++;
+          row = writeFieldRows(dWs, row, gFields, COL_SPAN);
+          // Trace Gold → Silver
+          const silverSrcs = new Set();
+          for (const f of gFields) { if (f.source_table) silverSrcs.add(f.source_table); }
+          for (const sSrc of silverSrcs) {
+            const sKey = sSrc.toLowerCase().replace(/^.*\./, '');
+            const sFields = fieldMap[sKey] || [];
+            if (sFields.length === 0) continue;
+            row++;
+            writeLayerHeader(dWs, row, `═══ SILVER — ${sSrc} ═══`, COL_SPAN, LAYER_COLORS.Silver_Stg);
+            row++;
+            row = writeFieldRows(dWs, row, sFields, COL_SPAN);
+            // Trace Silver → Bronze
+            const bronzeSrcs = new Set();
+            for (const f of sFields) { if (f.source_table) bronzeSrcs.add(f.source_table); }
+            if (bronzeSrcs.size > 0 && KB?.metadata?.bronze_meta) {
+              const bHits = [];
+              for (const bs of bronzeSrcs) {
+                const bsLower = bs.toLowerCase().replace(/^.*\./, '');
+                for (const bm of KB.metadata.bronze_meta) {
+                  if ((bm.target_table||'').toLowerCase().includes(bsLower) ||
+                      bsLower.includes((bm.target_table||'').toLowerCase())) {
+                    const key = `${bm.source_schema}.${bm.source_table}→${bm.target_table}`;
+                    if (!bHits.some(b => `${b.source_schema}.${b.source_table}→${b.target_table}` === key))
+                      bHits.push(bm);
+                  }
+                }
+              }
+              if (bHits.length > 0) {
+                row++;
+                writeLayerHeader(dWs, row, '═══ BRONZE — Source Systems ═══', COL_SPAN, LAYER_COLORS.Bronze);
+                row++;
+                row = writeBronzeRows(dWs, row, bHits, COL_SPAN);
+              }
+            }
+          }
+        }
+      } else {
+        // Gold / Silver detail — start with own fields, then chain down
+        const startLabel = zone.startsWith('Silver') ? 'SILVER' : 'GOLD';
+        const layerColor = zone === 'Gold' ? LAYER_COLORS.Gold : LAYER_COLORS.Silver_Stg;
+        writeLayerHeader(dWs, row, `═══ ${startLabel} — ${tbl.name} ═══`, COL_SPAN, layerColor);
+        row++;
+        const fields = tbl.fields || [];
+        row = writeFieldRows(dWs, row, fields, COL_SPAN);
+
+        // Chain down
+        const chain = traceTableChain(tbl.name, zone === 'Gold' ? 'Gold' : 'Silver', fieldMap);
+        for (const step of chain) {
+          if (step.table === tbl.name && step.layer === startLabel) continue; // skip self
+          row++;
+          const stepColor = step.layer === 'Bronze' ? LAYER_COLORS.Bronze
+            : step.layer === 'Silver' ? LAYER_COLORS.Silver_Stg : LAYER_COLORS.Gold;
+          writeLayerHeader(dWs, row, `═══ ${step.layer.toUpperCase()} — ${step.table} ═══`, COL_SPAN, stepColor);
+          row++;
+          if (step.bronzeMeta) {
+            row = writeBronzeRows(dWs, row, step.bronzeMeta, COL_SPAN);
+          } else {
+            row = writeFieldRows(dWs, row, step.fields || [], COL_SPAN);
+          }
+        }
+      }
+      dWs.columns = [{ width: 5 },{ width: 30 },{ width: 15 },{ width: 30 },{ width: 25 },{ width: 16 },{ width: 50 }];
       dWs.views = [{ state: 'frozen', ySplit: 4 }];
     }
-    await new Promise(r => setTimeout(r, 10)); // yield to UI
   }
 
   // ── Generate & download ────────────────────────────────────
@@ -1024,7 +1237,6 @@ async function generateLineageExcel() {
   const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   const url = URL.createObjectURL(blob);
   const totalSheets = wb.worksheets.length;
-  const totalTables = Object.values(zones).reduce((s, z) => s + z.length, 0);
 
   progEl.innerHTML = `📥 <b>Data Lineage Excel ready!</b><br>
     ${totalTables} tables across ${Object.keys(zones).length} zones, ${totalSheets} sheets<br>
