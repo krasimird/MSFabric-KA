@@ -492,6 +492,10 @@ function assembleJSONL(lineageByTable, chains, warehouseChunks, reportChunks) {
 // MAIN HANDLER
 // ═══════════════════════════════════════════════════════════════
 module.exports = async function (context, req) {
+  // DEBUG: alive check — remove after confirming function is reachable
+  context.res = { status: 200, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "alive" }) };
+  return;
+
   context.log("Analyze function invoked");
   const log = (...args) => context.log.info(...args);
   const startTime = Date.now();
