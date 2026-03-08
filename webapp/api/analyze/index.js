@@ -492,6 +492,7 @@ function assembleJSONL(lineageByTable, chains, warehouseChunks, reportChunks) {
 // MAIN HANDLER
 // ═══════════════════════════════════════════════════════════════
 module.exports = async function (context, req) {
+  context.log("Analyze function invoked");
   const log = (...args) => context.log.info(...args);
   const startTime = Date.now();
 
@@ -620,11 +621,12 @@ module.exports = async function (context, req) {
       body: summary,
     };
   } catch (err) {
-    context.log.error("Analysis failed:", err);
+    context.log.error("Fatal error:", err);
     context.res = {
       status: 500,
       headers: { "Content-Type": "application/json" },
-      body: { error: err.message, elapsed_seconds: ((Date.now() - startTime) / 1000).toFixed(1) },
+      body: JSON.stringify({ error: err.message, stack: err.stack, elapsed_seconds: ((Date.now() - startTime) / 1000).toFixed(1) }),
     };
+    return;
   }
 };
