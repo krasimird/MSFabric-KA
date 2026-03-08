@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>GenDWH Knowledge Assistant</title>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
   <script src="kb-cache.js"></script>
   <script src="ai-analysis.js"></script>
   <style>
@@ -710,6 +711,333 @@ Rules:
 - For Platinum/Warehouse fields, show the column mapping from the stored procedure SQL (e.g. [source_col] AS target_col)
 - Be concise but thorough`;
 
+// ── Excel generation helpers ───────────────────────────────────
+const TEAL = '1C8D7A';
+const TEAL_LIGHT = 'E6F5F2';
+const DARK_BLUE = '0B3052';
+const ALT_ROW = 'F2F3F4';
+const WHITE = 'FFFFFF';
+const TRANSFORM_COLORS = {
+  direct_map: 'D4EDDA', case_when: 'D6E9F8', coalesce: 'D4EDE8',
+  literal: 'E8E8E8', expression: 'FFF3CD', aggregate: 'F8D7DA',
+};
+
+function safeSheetName(name, maxLen = 31) {
+  let s = name.replace(/[\\/*?:\[\]]/g, '_').slice(0, maxLen);
+  if (s.length === 0) s = 'Sheet';
+  return s;
+}
+
+function uniqueSheetName(name, usedNames) {
+  let base = safeSheetName(name);
+  if (!usedNames.has(base)) { usedNames.add(base); return base; }
+  for (let i = 2; i < 999; i++) {
+    const candidate = safeSheetName(base.slice(0, 28) + '_' + i);
+    if (!usedNames.has(candidate)) { usedNames.add(candidate); return candidate; }
+  }
+  return base;
+}
+
+function styleHeader(row, colCount) {
+  row.height = 28;
+  for (let c = 1; c <= colCount; c++) {
+    const cell = row.getCell(c);
+    cell.font = { name: 'Calibri Light', size: 11, bold: true, color: { argb: WHITE } };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: TEAL } };
+    cell.alignment = { vertical: 'middle', wrapText: true };
+    cell.border = { bottom: { style: 'thin', color: { argb: '999999' } } };
+  }
+}
+
+function styleDataRow(row, colCount, rowIdx, codeColumns = []) {
+  const isAlt = rowIdx % 2 === 0;
+  for (let c = 1; c <= colCount; c++) {
+    const cell = row.getCell(c);
+    cell.font = { name: codeColumns.includes(c) ? 'Courier New' : 'Calibri', size: codeColumns.includes(c) ? 9 : 10 };
+    if (isAlt) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ALT_ROW } };
+    cell.alignment = { vertical: 'top', wrapText: true };
+  }
+}
+
+function addBackLink(ws, targetSheet, label) {
+  const cell = ws.getCell('A2');
+  cell.value = { text: `← ${label}`, hyperlink: `#'${targetSheet}'!A1` };
+  cell.font = { name: 'Calibri', size: 10, color: { argb: TEAL }, underline: true };
+}
+
+function styleTitleRow(ws, title, colSpan) {
+  ws.mergeCells(1, 1, 1, colSpan);
+  const cell = ws.getCell('A1');
+  cell.value = title;
+  cell.font = { name: 'Calibri Light', size: 16, bold: true, color: { argb: WHITE } };
+  cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: TEAL } };
+  cell.alignment = { vertical: 'middle', horizontal: 'center' };
+  ws.getRow(1).height = 36;
+}
+
+// ── Collect table data for Excel ──────────────────────────────
+function collectTablesForExcel() {
+  const zones = { Bronze: [], Silver: [], Gold: [], Platinum: [] };
+
+  // Build a map of table_lineage chunks by table name (lowercase)
+  const lineageMap = {};
+  const fieldMap = {}; // table_lower → [field_detail chunks]
+  for (const chunk of KNOWLEDGE) {
+    if (chunk.type === 'table_lineage') {
+      lineageMap[chunk.id?.toLowerCase()] = chunk;
+    }
+    if (chunk.type === 'field_detail') {
+      const key = chunk.table?.toLowerCase();
+      if (key) { if (!fieldMap[key]) fieldMap[key] = []; fieldMap[key].push(chunk); }
+    }
+  }
+
+  // Bronze tables from bronze_meta
+  if (KB?.metadata?.bronze_meta) {
+    const bronzeByTable = {};
+    for (const bm of KB.metadata.bronze_meta) {
+      const tbl = bm.target_table || 'unknown';
+      if (!bronzeByTable[tbl]) bronzeByTable[tbl] = { name: tbl, source: `${bm.source_schema||''}.${bm.source_table||''}`, columns: [], fields: [] };
+      bronzeByTable[tbl].source = `${bm.source_schema||''}.${bm.source_table||''}`;
+    }
+    // Enrich with schema columns
+    if (KB.schemas) for (const [itemId, val] of Object.entries(KB.schemas)) {
+      if (Array.isArray(val)) for (const tbl of val) {
+        const tblName = tbl.table_name || tbl.name || '';
+        if (bronzeByTable[tblName]) bronzeByTable[tblName].columns = tbl.columns || [];
+      }
+    }
+    zones.Bronze = Object.values(bronzeByTable);
+  }
+
+  // Silver + Gold tables from KNOWLEDGE (table_lineage)
+  for (const chunk of KNOWLEDGE) {
+    if (chunk.type !== 'table_lineage') continue;
+    const layer = (chunk.layer || '').toLowerCase();
+    const entry = {
+      name: chunk.id || 'unknown',
+      source: (chunk.source_tables || []).join(', '),
+      fieldCount: chunk.field_count || 0,
+      fields: fieldMap[chunk.id?.toLowerCase()] || [],
+    };
+    if (layer.includes('silver')) zones.Silver.push(entry);
+    else if (layer.includes('gold')) zones.Gold.push(entry);
+  }
+
+  // Platinum from warehouse_sproc/warehouse_view chunks
+  for (const chunk of KNOWLEDGE) {
+    if (chunk.type === 'warehouse_sproc' || chunk.type === 'warehouse_view') {
+      zones.Platinum.push({
+        name: `${chunk.schema||'dbo'}.${chunk.name}`,
+        source: chunk.type === 'warehouse_sproc' ? 'Stored Procedure' : 'View',
+        fieldCount: 0,
+        definition: chunk.definition || '',
+        chunkType: chunk.type,
+      });
+    }
+  }
+
+  // Sort each zone
+  for (const z of Object.keys(zones)) zones[z].sort((a, b) => a.name.localeCompare(b.name));
+
+  return { zones, fieldMap };
+}
+
+// ── Generate Data Lineage Excel ───────────────────────────────
+async function generateLineageExcel() {
+  if (!KB) { appendMessage('assistant', '⚠️ No data loaded — cannot generate Excel.'); return; }
+
+  const progressDiv = document.createElement('div');
+  progressDiv.className = 'message assistant';
+  progressDiv.innerHTML = '<div class="msg-label">Assistant</div><div class="msg-bubble" id="excelProgress">📊 <b>Generating Data Lineage Excel...</b><br></div>';
+  chatArea.appendChild(progressDiv);
+  chatArea.scrollTop = chatArea.scrollHeight;
+  const progEl = document.getElementById('excelProgress');
+  const log = (msg) => { progEl.innerHTML += msg + '<br>'; chatArea.scrollTop = chatArea.scrollHeight; };
+
+  await new Promise(r => setTimeout(r, 50)); // let UI render
+
+  const { zones } = collectTablesForExcel();
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'GenDWH Knowledge Assistant';
+  wb.created = new Date();
+  const usedNames = new Set();
+  const zoneSheetNames = {};
+  const detailSheetMap = {}; // tableName → sheetName
+
+  // ── INDEX sheet ──────────────────────────────────────────────
+  log('Creating INDEX sheet...');
+  const idxWs = wb.addWorksheet(uniqueSheetName('INDEX', usedNames));
+  styleTitleRow(idxWs, 'GenDWH Data Lineage', 4);
+  idxWs.getCell('A2').value = `Generated: ${new Date().toISOString().slice(0,10)}`;
+  idxWs.getCell('A2').font = { name: 'Calibri', size: 10, italic: true, color: { argb: '666666' } };
+
+  const idxHeaders = ['Zone', 'Tables', 'Description', 'Navigate'];
+  const idxHeaderRow = idxWs.getRow(4);
+  idxHeaders.forEach((h, i) => { idxHeaderRow.getCell(i+1).value = h; });
+  styleHeader(idxHeaderRow, 4);
+
+  const zoneDescriptions = {
+    Bronze: 'Landing / 1:1 copy from source systems',
+    Silver: 'Cleansed, enriched, IFRS staging (SCD1)',
+    Gold: 'Business-ready aggregations (SCD2)',
+    Platinum: 'Warehouse views & stored procedures',
+  };
+  let idxRow = 5;
+  for (const [zone, tables] of Object.entries(zones)) {
+    // Create zone sheet first so we can link to it
+    const zoneSheetName = uniqueSheetName(zone, usedNames);
+    zoneSheetNames[zone] = zoneSheetName;
+    const r = idxWs.getRow(idxRow);
+    r.getCell(1).value = zone;
+    r.getCell(1).font = { name: 'Calibri', size: 11, bold: true };
+    r.getCell(2).value = tables.length;
+    r.getCell(3).value = zoneDescriptions[zone] || '';
+    r.getCell(4).value = { text: `→ ${zone}`, hyperlink: `#'${zoneSheetName}'!A1` };
+    r.getCell(4).font = { name: 'Calibri', size: 10, color: { argb: TEAL }, underline: true };
+    styleDataRow(r, 4, idxRow - 5);
+    idxRow++;
+  }
+  idxWs.columns = [{ width: 15 }, { width: 10 }, { width: 50 }, { width: 15 }];
+  await new Promise(r => setTimeout(r, 10));
+
+  // ── Zone sheets + detail sheets ─────────────────────────────
+  for (const [zone, tables] of Object.entries(zones)) {
+    log(`Creating ${zone} zone (${tables.length} tables)...`);
+    const zoneWs = wb.addWorksheet(zoneSheetNames[zone]);
+    styleTitleRow(zoneWs, `${zone} Layer — Data Lineage`, 5);
+    addBackLink(zoneWs, 'INDEX', 'Back to INDEX');
+
+    // Zone header row
+    const zHeaders = ['#', 'Table Name', 'Fields', 'Source Tables', 'Navigate'];
+    const zHeaderRow = zoneWs.getRow(4);
+    zHeaders.forEach((h, i) => { zHeaderRow.getCell(i+1).value = h; });
+    styleHeader(zHeaderRow, 5);
+
+    let zRow = 5;
+    for (let ti = 0; ti < tables.length; ti++) {
+      const tbl = tables[ti];
+      // Create detail sheet
+      const detailName = uniqueSheetName(tbl.name, usedNames);
+      detailSheetMap[tbl.name] = detailName;
+
+      const r = zoneWs.getRow(zRow);
+      r.getCell(1).value = ti + 1;
+      r.getCell(2).value = tbl.name;
+      r.getCell(3).value = tbl.fieldCount || tbl.columns?.length || tbl.fields?.length || 0;
+      r.getCell(4).value = tbl.source || '';
+      r.getCell(5).value = { text: '→ Detail', hyperlink: `#'${detailName}'!A1` };
+      r.getCell(5).font = { name: 'Calibri', size: 10, color: { argb: TEAL }, underline: true };
+      styleDataRow(r, 5, zRow - 5, [4]);
+      zRow++;
+    }
+    zoneWs.columns = [{ width: 6 }, { width: 40 }, { width: 8 }, { width: 50 }, { width: 12 }];
+    zoneWs.views = [{ state: 'frozen', ySplit: 4 }];
+
+    // ── Detail sheets ────────────────────────────────────────
+    for (const tbl of tables) {
+      const dWs = wb.addWorksheet(detailSheetMap[tbl.name]);
+      styleTitleRow(dWs, tbl.name, 7);
+      addBackLink(dWs, zoneSheetNames[zone], `Back to ${zone}`);
+
+      if (zone === 'Bronze') {
+        // Bronze: just show columns from schema
+        const cols = tbl.columns || [];
+        const dHeaders = ['#', 'Column Name', 'Data Type', 'Source Table'];
+        const dHeaderRow = dWs.getRow(4);
+        dHeaders.forEach((h, i) => { dHeaderRow.getCell(i+1).value = h; });
+        styleHeader(dHeaderRow, 4);
+        let dRow = 5;
+        for (let ci = 0; ci < cols.length; ci++) {
+          const c = cols[ci];
+          const r = dWs.getRow(dRow);
+          r.getCell(1).value = ci + 1;
+          r.getCell(2).value = c.column_name || c.name || '';
+          r.getCell(3).value = c.data_type || '';
+          r.getCell(4).value = tbl.source || '';
+          styleDataRow(r, 4, dRow - 5);
+          dRow++;
+        }
+        if (cols.length === 0) { dWs.getRow(5).getCell(1).value = '(No column data available)'; }
+        dWs.columns = [{ width: 6 }, { width: 35 }, { width: 20 }, { width: 40 }];
+      } else if (zone === 'Platinum') {
+        // Platinum: show definition (sproc/view SQL)
+        const dHeaders = ['Property', 'Value'];
+        const dHeaderRow = dWs.getRow(4);
+        dHeaders.forEach((h, i) => { dHeaderRow.getCell(i+1).value = h; });
+        styleHeader(dHeaderRow, 2);
+        dWs.getRow(5).getCell(1).value = 'Type';
+        dWs.getRow(5).getCell(2).value = tbl.chunkType === 'warehouse_sproc' ? 'Stored Procedure' : 'View';
+        styleDataRow(dWs.getRow(5), 2, 0);
+        dWs.getRow(6).getCell(1).value = 'SQL Definition';
+        dWs.getRow(6).getCell(2).value = (tbl.definition || '').slice(0, 8000);
+        dWs.getRow(6).getCell(2).font = { name: 'Courier New', size: 9 };
+        dWs.getRow(6).getCell(2).alignment = { wrapText: true, vertical: 'top' };
+        styleDataRow(dWs.getRow(6), 2, 1, [2]);
+        dWs.columns = [{ width: 18 }, { width: 120 }];
+      } else {
+        // Silver / Gold: field-level lineage from KNOWLEDGE
+        const fields = tbl.fields || [];
+        const dHeaders = ['#', 'Target Field', 'Data Type', 'Source Table', 'Source Column', 'Transformation', 'SQL Expression'];
+        const dHeaderRow = dWs.getRow(4);
+        dHeaders.forEach((h, i) => { dHeaderRow.getCell(i+1).value = h; });
+        styleHeader(dHeaderRow, 7);
+        let dRow = 5;
+        for (let fi = 0; fi < fields.length; fi++) {
+          const f = fields[fi];
+          const r = dWs.getRow(dRow);
+          r.getCell(1).value = fi + 1;
+          r.getCell(2).value = f.target_field || '';
+          r.getCell(3).value = f.data_type || '';
+          r.getCell(4).value = f.source_table || '';
+          r.getCell(5).value = f.source_column || '';
+          r.getCell(6).value = f.transformation_type || '';
+          r.getCell(7).value = (f.expression || '').slice(0, 500);
+          styleDataRow(r, 7, dRow - 5, [7]);
+          // Transformation badge color
+          const tc = TRANSFORM_COLORS[(f.transformation_type || '').toLowerCase()];
+          if (tc) r.getCell(6).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: tc } };
+          dRow++;
+        }
+        if (fields.length === 0) { dWs.getRow(5).getCell(1).value = '(No field lineage data available)'; }
+        dWs.columns = [{ width: 5 }, { width: 30 }, { width: 15 }, { width: 30 }, { width: 25 }, { width: 16 }, { width: 50 }];
+      }
+      dWs.views = [{ state: 'frozen', ySplit: 4 }];
+    }
+    await new Promise(r => setTimeout(r, 10)); // yield to UI
+  }
+
+  // ── Generate & download ────────────────────────────────────
+  log('Writing Excel file...');
+  const buffer = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(blob);
+  const totalSheets = wb.worksheets.length;
+  const totalTables = Object.values(zones).reduce((s, z) => s + z.length, 0);
+
+  progEl.innerHTML = `📥 <b>Data Lineage Excel ready!</b><br>
+    ${totalTables} tables across ${Object.keys(zones).length} zones, ${totalSheets} sheets<br>
+    <a href="${url}" download="GenDWH_Data_Lineage_${new Date().toISOString().slice(0,10)}.xlsx"
+       style="display:inline-block;margin-top:8px;padding:8px 16px;background:#1C8D7A;color:white;border-radius:6px;text-decoration:none;font-weight:bold;">
+       📥 Download Excel
+    </a>`;
+  chatArea.scrollTop = chatArea.scrollHeight;
+  chatHistory.push({ role: 'assistant', content: `[Generated Data Lineage Excel: ${totalTables} tables, ${totalSheets} sheets]` });
+  console.log(`[SKILL] Lineage Excel generated: ${totalTables} tables, ${totalSheets} sheets, ${(buffer.byteLength/1024).toFixed(0)} KB`);
+}
+
+// ── Skill detection ────────────────────────────────────────────
+function detectSkill(text) {
+  const t = text.trim().toLowerCase();
+  if (/^\/lineage\b/.test(t) || /генерирай\s+lineage\s+excel|generate\s+lineage|data\s+lineage\s+excel|линеадж\s+excel|lineage\s+excel/i.test(t))
+    return 'lineage_excel';
+  if (/^\/dictionary\b/.test(t) || /генерирай\s+data\s+dictionary|generate\s+dictionary|data\s+dictionary\s+excel/i.test(t))
+    return 'data_dictionary';
+  if (/^\/glossary\b/.test(t) || /генерирай\s+glossary|generate\s+glossary|business\s+glossary/i.test(t))
+    return 'business_glossary';
+  return null;
+}
+
 // ── Chat logic ─────────────────────────────────────────────────
 async function sendMessage(text) {
   if (!text.trim()) return;
@@ -724,6 +1052,25 @@ async function sendMessage(text) {
 
   // Trim history
   if (chatHistory.length > MAX_HISTORY) chatHistory = chatHistory.slice(-MAX_HISTORY);
+
+  // ── Skill detection — intercept before sending to Claude ────
+  const skill = detectSkill(text);
+  if (skill) {
+    console.log(`[SKILL] Detected: ${skill}`);
+    try {
+      if (skill === 'lineage_excel') {
+        await generateLineageExcel();
+      } else if (skill === 'data_dictionary') {
+        appendMessage('assistant', '⚠️ Data Dictionary Excel — coming soon!');
+      } else if (skill === 'business_glossary') {
+        appendMessage('assistant', '⚠️ Business Glossary — coming soon!');
+      }
+    } catch (err) {
+      appendMessage('assistant', '⚠️ Skill error: ' + err.message);
+      console.error('[SKILL] Error:', err);
+    }
+    return; // Don't send to Claude
+  }
 
   // Show spinner
   const spinner = document.createElement('div');
