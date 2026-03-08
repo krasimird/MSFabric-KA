@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>GenDWH Knowledge Assistant</title>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
   <script src="kb-cache.js"></script>
   <script src="ai-analysis.js"></script>
@@ -139,6 +140,8 @@
     .msg-bubble pre { background: #f6f6f6; padding: 10px 12px; border-radius: 6px; overflow-x: auto; font-size: 13px; margin: 8px 0; }
     .msg-bubble code { font-family: 'Cascadia Code', Consolas, monospace; font-size: 13px; }
     .msg-bubble code:not(pre code) { background: #f0f0f0; padding: 1px 5px; border-radius: 3px; }
+    .mermaid-container { margin: 8px 0; padding: 12px; background: #fff; border: 1px solid var(--border); border-radius: 6px; overflow-x: auto; }
+    .mermaid-container svg { max-width: 100%; height: auto; }
     .msg-bubble table { border-collapse: collapse; margin: 8px 0; font-size: 13px; }
     .msg-bubble th, .msg-bubble td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; }
     .msg-bubble th { background: var(--teal-light); font-weight: 600; }
@@ -299,6 +302,9 @@
 </div>
 
 <script>
+// ── Mermaid init (startOnLoad: false — we render manually after each message) ──
+mermaid.initialize({ startOnLoad: false, theme: 'default', securityLevel: 'loose' });
+
 /* ═══════════════════════════════════════════════════════════════
    GenDWH Knowledge Assistant — Client-side RAG + Chat
    ═══════════════════════════════════════════════════════════════ */
@@ -2244,6 +2250,20 @@ function appendMessage(role, content) {
   bubble.className = 'msg-bubble';
   if (role === 'assistant') {
     bubble.innerHTML = marked.parse(content);
+    // Render Mermaid diagrams: find <code class="language-mermaid"> blocks
+    bubble.querySelectorAll('pre code.language-mermaid').forEach(codeEl => {
+      const src = codeEl.textContent;
+      const container = document.createElement('div');
+      container.className = 'mermaid-container';
+      const mermaidDiv = document.createElement('div');
+      mermaidDiv.className = 'mermaid';
+      mermaidDiv.textContent = src;
+      container.appendChild(mermaidDiv);
+      codeEl.closest('pre').replaceWith(container);
+    });
+    // Ask Mermaid to render the new nodes
+    try { mermaid.run({ nodes: bubble.querySelectorAll('.mermaid') }); }
+    catch (e) { console.warn('[Mermaid] render error:', e); }
   } else {
     bubble.textContent = content;
   }
