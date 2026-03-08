@@ -1,24 +1,26 @@
 {
-  "properties": {
-    "description": "Runs GenDWH_KA_Extraction notebook Mon-Fri 06:00 FLE. Retry x2, timeout 20 min.",
-    "activities": [
-      {
-        "name": "Run_Extraction_Notebook",
-        "type": "TridentNotebook",
-        "dependsOn": [],
-        "policy": {
-          "timeout": "0.00:20:00",
-          "retry": 2,
-          "retryIntervalInSeconds": 60,
-          "secureInput": false,
-          "secureOutput": false
-        },
-        "typeProperties": {
-          "notebookId": "8aefd8c4-73f9-4389-a9e1-2f8ee5c62847",
-          "workspaceId": "f5ae753e-9be5-4236-8e0b-89e2ca21084c"
-        }
-      }
-    ]
-  }
+    "name": "GenDWH_KA_Extraction_DP",
+    "objectId": "REPLACE_WITH_ACTUAL_OBJECT_ID",
+    "properties": {
+        "description": "Runs GenDWH_KA_Extraction notebook Mon-Fri 06:00 FLE. Retry x2, timeout 20 min.",
+        "activities": [
+            {
+                "name": "Run_Extraction_Notebook",
+                "type": "TridentNotebook",
+                "dependsOn": [],
+                "policy": {
+                    "timeout": "0.00:20:00",
+                    "retry": 2,
+                    "retryIntervalInSeconds": 60,
+                    "secureInput": false,
+                    "secureOutput": false
+                },
+                "typeProperties": {
+                    "notebookId": "8aefd8c4-73f9-4389-a9e1-2f8ee5c62847",
+                    "workspaceId": "f5ae753e-9be5-4236-8e0b-89e2ca21084c"
+                }
+            }
+        ]
+    }
 }
 
