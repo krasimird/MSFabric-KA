@@ -150,6 +150,7 @@
       <button class="quick-btn" data-q="What stored procedures exist in the warehouses?">🏭 Warehouse procedures</button>
       <button class="quick-btn" data-q="Генерирай Data Lineage Excel">📥 Generate Data Lineage Excel</button>
       <button class="quick-btn" data-q="Генерирай Data Dictionary Excel">📥 Generate Data Dictionary</button>
+      <button class="quick-btn" data-q="Генерирай Business Glossary">📥 Generate Business Glossary</button>
     </div>
     <div class="analysis-section" id="analysisSection" style="display:none;">
       <h3>🧠 AI Analysis</h3>
@@ -1501,12 +1502,12 @@ async function generateDictionaryExcel() {
   console.log(`[SKILL] Dictionary Excel generated: ${totalSheets} sheets, ${(buffer.byteLength/1024).toFixed(0)} KB`);
 }
 
-// ── Generate Business Glossary (HTML) ─────────────────────────
+// ── Generate Business Glossary (Excel) ────────────────────────
 async function generateBusinessGlossary() {
   if (!KB) { appendMessage('assistant', '⚠️ No data loaded — cannot generate glossary.'); return; }
   const progressDiv = document.createElement('div');
   progressDiv.className = 'message assistant';
-  progressDiv.innerHTML = '<div class="msg-label">Assistant</div><div class="msg-bubble" id="glossProgress">📘 <b>Generating Business Glossary...</b><br></div>';
+  progressDiv.innerHTML = '<div class="msg-label">Assistant</div><div class="msg-bubble" id="glossProgress">📘 <b>Generating Business Glossary Excel...</b><br></div>';
   chatArea.appendChild(progressDiv);
   chatArea.scrollTop = chatArea.scrollHeight;
   const progEl = document.getElementById('glossProgress');
@@ -1515,7 +1516,9 @@ async function generateBusinessGlossary() {
 
   // ── Collect terms ──────────────────────────────────────────
   log('Collecting terms from schemas and knowledge base...');
-  const termSet = new Map(); // name → { type, source, context }
+  const termList = []; // { term, hint }
+  const seen = new Set();
+  const addTerm = (term, hint) => { if (!term || seen.has(term)) return; seen.add(term); termList.push({ term, hint }); };
 
   // Item name map
   const itemMap = {};
@@ -1523,7 +1526,8 @@ async function generateBusinessGlossary() {
     for (const item of (ws.items || []))
       itemMap[item.id] = { name: item.displayName || item.name || item.id, type: item.type };
 
-  // Tables & columns from schemas
+  // Table names from schemas
+  const colPatterns = new Map(); // suffix/prefix → count
   if (KB.schemas) for (const [itemId, val] of Object.entries(KB.schemas)) {
     if (!val) continue;
     const info = itemMap[itemId] || { name: itemId.slice(0, 12), type: 'Unknown' };
@@ -1531,109 +1535,207 @@ async function generateBusinessGlossary() {
     const tables = Array.isArray(val) ? val : (val.tables || []);
     for (const tbl of tables) {
       const tName = tbl.table_name || tbl.name || '';
-      if (tName) termSet.set(tName, { type: 'Table', source: info.name });
+      if (tName) addTerm(tName, `Table in ${info.name}`);
+      // Track column patterns
+      for (const c of (tbl.columns || [])) {
+        const cn = (c.column_name || c.COLUMN_NAME || c.name || '').toLowerCase();
+        for (const pat of ['_bk', '_sk', '_id', '_key', '_date', '_flag', '_code', '_name', '_desc', '_amt', '_cnt', '_pct']) {
+          if (cn.endsWith(pat)) { colPatterns.set(pat, (colPatterns.get(pat) || 0) + 1); break; }
+        }
+        for (const pat of ['is_', 'has_', 'valid_', 'src_', 'stg_', 'dim_', 'fact_']) {
+          if (cn.startsWith(pat)) { colPatterns.set(pat, (colPatterns.get(pat) || 0) + 1); break; }
+        }
+      }
     }
     if (isWarehouse && val.views) for (const vw of val.views)
-      if (vw.name) termSet.set(vw.name, { type: 'View', source: info.name });
+      if (vw.name) addTerm(vw.name, `View in ${info.name}`);
     if (isWarehouse && val.procedures) for (const sp of val.procedures)
-      if (sp.name) termSet.set(sp.name, { type: 'Procedure', source: info.name });
+      if (sp.name) addTerm(sp.name, `Procedure in ${info.name}`);
   }
 
-  // Business terms from KNOWLEDGE chunks
+  // Add column pattern terms
+  for (const [pat, cnt] of colPatterns) if (cnt >= 2) addTerm(pat, `Column pattern (${cnt} occurrences)`);
+
+  // IFRS / business terms from KNOWLEDGE field_detail
+  const ifrsTerms = new Set();
+  const ifrsRe = /\b(IFRS\s*1[67]|UoA|BSP|DAC|UPR|IBNR|SCD[12]|Type\s*[12]|Slowly\s+Changing|surrogate\s+key|business\s+key|natural\s+key)\b/gi;
+  const xformTypes = new Set();
   for (const chunk of KNOWLEDGE) {
-    if (chunk.type === 'field_detail' && chunk.table)
-      termSet.set(chunk.table, { type: 'Table', source: chunk.warehouse_name || 'Knowledge Base' });
+    if (chunk.type === 'field_detail') {
+      const bl = chunk.business_logic || '';
+      let m; while ((m = ifrsRe.exec(bl)) !== null) ifrsTerms.add(m[1].trim());
+      if (chunk.transformation_type) xformTypes.add(chunk.transformation_type);
+      if (chunk.table) addTerm(chunk.table, `Table from knowledge base`);
+    }
     if (chunk.type === 'warehouse_lineage' && chunk.target_table)
-      termSet.set(chunk.target_table, { type: 'Lineage Target', source: chunk.warehouse_name || '' });
+      addTerm(chunk.target_table, `Lineage target`);
   }
+  for (const t of ifrsTerms) addTerm(t, 'IFRS / insurance term');
+  for (const t of xformTypes) addTerm(t, 'Transformation type');
 
-  const terms = [...termSet.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-  log(`Found <b>${terms.length}</b> unique terms. Asking Claude for business definitions...`);
+  // Architecture terms
+  for (const t of ['Bronze', 'Silver Raw', 'Silver Staging', 'Gold', 'Platinum', 'Medallion Architecture', 'Lakehouse', 'Warehouse', 'Data Pipeline', 'ETL', 'ELT'])
+    addTerm(t, 'Architecture concept');
+
+  log(`Found <b>${termList.length}</b> terms. Asking Claude for categorized definitions...`);
   await new Promise(r => setTimeout(r, 10));
 
-  // ── Call Claude for definitions (batched) ──────────────────
+  // ── Call Claude for definitions (batched, max 100 terms) ───
+  const capped = termList.slice(0, 100);
   const BATCH = 40;
-  const glossaryEntries = [];
-  for (let i = 0; i < terms.length; i += BATCH) {
-    const batch = terms.slice(i, i + BATCH);
-    const termList = batch.map(([name, info]) => `- ${name} (${info.type}, from ${info.source})`).join('\n');
-    log(`Defining terms ${i + 1}–${Math.min(i + BATCH, terms.length)} of ${terms.length}...`);
-
+  const glossaryEntries = []; // { term, category, definition, example }
+  for (let i = 0; i < capped.length; i += BATCH) {
+    const batch = capped.slice(i, i + BATCH);
+    const prompt = batch.map(t => `- ${t.term} (${t.hint})`).join('\n');
+    log(`Defining terms ${i + 1}–${Math.min(i + BATCH, capped.length)} of ${capped.length}...`);
     try {
       const resp = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          messages: [{ role: 'user', content: `Define each term below in 1-2 sentences for a business glossary of a data warehouse (Medallion architecture: Bronze/Silver/Gold/Platinum). Return ONLY a JSON array of objects with "term" and "definition" keys. No markdown, no code fences.\n\n${termList}` }],
-          system: 'You are a data warehouse documentation expert. Return valid JSON only — an array of {term, definition} objects.'
+          messages: [{ role: 'user', content: `Generate a business glossary for an insurance data warehouse. Return ONLY a JSON array. Each item: {"term","category","definition","example"}. category must be one of: Business, Technical, IFRS, Architecture. Terms to define:\n\n${prompt}` }],
+          system: 'You are a data warehouse documentation expert for an insurance company using Medallion architecture (Bronze/Silver/Gold/Platinum). Return valid JSON only — an array of objects. No markdown, no code fences.'
         })
       });
       const data = await resp.json();
       const raw = data.content ? data.content.map(c => c.text).join('') : '[]';
-      // Parse JSON — strip any markdown fences
       const cleaned = raw.replace(/```json\s*/gi, '').replace(/```/g, '').trim();
       try {
         const parsed = JSON.parse(cleaned);
-        for (const entry of parsed) {
-          const meta = termSet.get(entry.term) || batch.find(([n]) => n === entry.term)?.[1] || {};
-          glossaryEntries.push({ term: entry.term, definition: entry.definition || '', type: meta.type || '', source: meta.source || '' });
-        }
-      } catch (parseErr) {
-        // Fallback: add terms without definitions
-        for (const [name, info] of batch) glossaryEntries.push({ term: name, definition: '(definition unavailable)', type: info.type, source: info.source });
+        for (const e of parsed) glossaryEntries.push({ term: e.term || '', category: e.category || 'Technical', definition: e.definition || '', example: e.example || '' });
+      } catch (_) {
+        for (const t of batch) glossaryEntries.push({ term: t.term, category: 'Technical', definition: '(definition unavailable)', example: '' });
       }
-    } catch (fetchErr) {
-      for (const [name, info] of batch) glossaryEntries.push({ term: name, definition: '(API error)', type: info.type, source: info.source });
+    } catch (_) {
+      for (const t of batch) glossaryEntries.push({ term: t.term, category: 'Technical', definition: '(API error)', example: '' });
     }
     await new Promise(r => setTimeout(r, 10));
   }
   glossaryEntries.sort((a, b) => a.term.localeCompare(b.term));
 
-  // ── Build styled HTML ──────────────────────────────────────
-  log('Building HTML document...');
-  const dateStr = new Date().toISOString().slice(0, 10);
-  let html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>GenDWH Business Glossary</title>
-<style>
-  body { font-family: Calibri, 'Segoe UI', sans-serif; margin: 40px auto; max-width: 960px; color: #333; }
-  h1 { color: #1C8D7A; border-bottom: 3px solid #1C8D7A; padding-bottom: 8px; }
-  .meta { color: #888; font-size: 0.9em; margin-bottom: 24px; }
-  table { width: 100%; border-collapse: collapse; margin-top: 16px; }
-  th { background: #1C8D7A; color: white; text-align: left; padding: 10px 12px; font-weight: 600; }
-  td { padding: 8px 12px; border-bottom: 1px solid #ddd; vertical-align: top; }
-  tr:nth-child(even) { background: #F2F3F4; }
-  .type { font-size: 0.85em; color: #0B3052; font-weight: 600; }
-  .source { font-size: 0.8em; color: #888; }
-  .letter { background: #0B3052; color: white; font-size: 1.3em; font-weight: bold; padding: 6px 14px; }
-  footer { margin-top: 32px; text-align: center; color: #aaa; font-size: 0.85em; }
-</style></head><body>
-<h1>📘 GenDWH Business Glossary</h1>
-<p class="meta">Generated: ${dateStr} &nbsp;|&nbsp; ${glossaryEntries.length} terms &nbsp;|&nbsp; InspirIT — GenDWH Knowledge Assistant</p>
-<table><tr><th>#</th><th>Term</th><th>Type</th><th>Source</th><th>Business Definition</th></tr>\n`;
-
-  let currentLetter = '';
-  for (let i = 0; i < glossaryEntries.length; i++) {
-    const e = glossaryEntries[i];
-    const firstChar = (e.term[0] || '').toUpperCase();
-    if (firstChar !== currentLetter) {
-      currentLetter = firstChar;
-      html += `<tr><td class="letter" colspan="5">${currentLetter}</td></tr>\n`;
-    }
-    html += `<tr><td>${i + 1}</td><td><b>${e.term}</b></td><td class="type">${e.type}</td><td class="source">${e.source}</td><td>${e.definition}</td></tr>\n`;
+  // ── Group by category ──────────────────────────────────────
+  const CATS = ['Business', 'Technical', 'IFRS', 'Architecture'];
+  const grouped = {};
+  for (const cat of CATS) grouped[cat] = [];
+  for (const e of glossaryEntries) {
+    const cat = CATS.includes(e.category) ? e.category : 'Technical';
+    grouped[cat].push(e);
   }
-  html += `</table>\n<footer>InspirIT — GenDWH Knowledge Assistant &copy; ${new Date().getFullYear()}</footer>\n</body></html>`;
 
-  // ── Download ───────────────────────────────────────────────
-  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+  // ── Build Excel workbook ───────────────────────────────────
+  log('Building Excel workbook...');
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'GenDWH Knowledge Assistant';
+  wb.created = new Date();
+  const usedNames = new Set();
+  const COL = 4;
+
+  // ── TITLE PAGE ─────────────────────────────────────────────
+  const titleWs = wb.addWorksheet(safeName('Title', usedNames));
+  titleWs.mergeCells('A1:D1');
+  const tc = titleWs.getCell('A1');
+  tc.value = 'GenDWH Business Glossary';
+  tc.font = { name: 'Calibri Light', size: 28, bold: true, color: { argb: WHITE } };
+  tc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: TEAL } };
+  tc.alignment = { vertical: 'middle', horizontal: 'center' };
+  titleWs.getRow(1).height = 56;
+  titleWs.getCell('A3').value = `Generated: ${new Date().toISOString().slice(0,10)}`;
+  titleWs.getCell('A3').font = { name: 'Calibri', size: 11, italic: true, color: { argb: '666666' } };
+  titleWs.getCell('A5').value = 'Summary';
+  titleWs.getCell('A5').font = { name: 'Calibri Light', size: 14, bold: true, color: { argb: TEAL } };
+  let tRow = 6;
+  for (const cat of CATS) {
+    titleWs.getCell(`A${tRow}`).value = `${cat} Terms`;
+    titleWs.getCell(`A${tRow}`).font = { name: 'Calibri', size: 10 };
+    titleWs.getCell(`C${tRow}`).value = grouped[cat].length;
+    titleWs.getCell(`C${tRow}`).font = { name: 'Calibri', size: 10, bold: true };
+    tRow++;
+  }
+  titleWs.getCell(`A${tRow}`).value = 'Total';
+  titleWs.getCell(`A${tRow}`).font = { name: 'Calibri', size: 10, bold: true };
+  titleWs.getCell(`C${tRow}`).value = glossaryEntries.length;
+  titleWs.getCell(`C${tRow}`).font = { name: 'Calibri', size: 10, bold: true };
+  titleWs.getCell(`A${tRow+2}`).value = 'InspirIT — GenDWH Knowledge Assistant';
+  titleWs.getCell(`A${tRow+2}`).font = { name: 'Calibri Light', size: 10, italic: true, color: { argb: '999999' } };
+  titleWs.columns = [{ width: 22 },{ width: 15 },{ width: 12 },{ width: 15 }];
+
+  // ── INDEX ──────────────────────────────────────────────────
+  const idxWs = wb.addWorksheet(safeName('INDEX', usedNames));
+  styleTitleRow(idxWs, 'Business Glossary — Index', COL);
+  addBackLink(idxWs, 'Title', 'Back to Title');
+  const idxHdr = idxWs.getRow(4);
+  ['#','Category','Terms','Navigate'].forEach((h,i) => { idxHdr.getCell(i+1).value = h; });
+  styleHeader(idxHdr, COL);
+  const catSheetNames = {};
+  let iRow = 5;
+  for (let ci = 0; ci < CATS.length; ci++) {
+    const cat = CATS[ci];
+    const shName = safeName(cat + ' Terms', usedNames);
+    catSheetNames[cat] = shName;
+    const r = idxWs.getRow(iRow);
+    r.getCell(1).value = ci + 1;
+    r.getCell(2).value = cat;
+    r.getCell(3).value = grouped[cat].length;
+    r.getCell(4).value = { text: '→ Sheet', hyperlink: `#'${shName}'!A1` };
+    r.getCell(4).font = { name: 'Calibri', size: 10, color: { argb: TEAL }, underline: true };
+    styleDataRow(r, COL, iRow - 5);
+    iRow++;
+  }
+  idxWs.columns = [{ width: 5 },{ width: 22 },{ width: 10 },{ width: 14 }];
+  idxWs.views = [{ state: 'frozen', ySplit: 4 }];
+
+  // ── Category sheets ────────────────────────────────────────
+  const catColors = { Business: LAYER_COLORS.Gold, Technical: LAYER_COLORS.Silver_Stg, IFRS: LAYER_COLORS.Platinum, Architecture: 'D6EAF8' };
+  const GCOL = 4;
+  for (const cat of CATS) {
+    const entries = grouped[cat];
+    log(`Creating ${cat} sheet (${entries.length} terms)...`);
+    const ws = wb.addWorksheet(catSheetNames[cat]);
+    styleTitleRow(ws, `${cat} Terms`, GCOL);
+    addBackLink(ws, 'INDEX', 'Back to INDEX');
+    const hdr = ws.getRow(4);
+    ['#','Term','Definition','Example'].forEach((h,i) => { hdr.getCell(i+1).value = h; });
+    styleHeader(hdr, GCOL);
+    let row = 5;
+    for (let ei = 0; ei < entries.length; ei++) {
+      const e = entries[ei];
+      const r = ws.getRow(row);
+      r.getCell(1).value = ei + 1;
+      r.getCell(2).value = e.term;
+      r.getCell(2).font = { name: 'Calibri', size: 10, bold: true };
+      r.getCell(3).value = e.definition;
+      r.getCell(3).alignment = { wrapText: true, vertical: 'top' };
+      r.getCell(4).value = e.example;
+      r.getCell(4).font = { name: 'Calibri', size: 9, italic: true };
+      r.getCell(4).alignment = { wrapText: true, vertical: 'top' };
+      styleDataRow(r, GCOL, ei);
+      row++;
+    }
+    if (entries.length === 0) {
+      ws.getRow(row).getCell(1).value = '(No terms in this category)';
+      ws.getRow(row).getCell(1).font = { name: 'Calibri', size: 10, italic: true, color: { argb: '999999' } };
+    }
+    ws.columns = [{ width: 5 },{ width: 35 },{ width: 60 },{ width: 40 }];
+    ws.views = [{ state: 'frozen', ySplit: 4 }];
+    await new Promise(r => setTimeout(r, 10));
+  }
+
+  // ── Generate & download ────────────────────────────────────
+  log('Writing Excel file...');
+  const buffer = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   const url = URL.createObjectURL(blob);
-  progEl.innerHTML = `📘 <b>Business Glossary ready!</b><br>
-    ${glossaryEntries.length} terms defined<br>
-    <a href="${url}" download="GenDWH_Business_Glossary_${dateStr}.html"
+  const totalSheets = wb.worksheets.length;
+
+  progEl.innerHTML = `📘 <b>Business Glossary Excel ready!</b><br>
+    ${glossaryEntries.length} terms across ${CATS.length} categories, ${totalSheets} sheets<br>
+    <a href="${url}" download="GenDWH_Business_Glossary_${new Date().toISOString().slice(0,10)}.xlsx"
        style="display:inline-block;margin-top:8px;padding:8px 16px;background:#1C8D7A;color:white;border-radius:6px;text-decoration:none;font-weight:bold;">
-       📥 Download Glossary (HTML)
+       📥 Download Excel
     </a>`;
   chatArea.scrollTop = chatArea.scrollHeight;
-  chatHistory.push({ role: 'assistant', content: `[Generated Business Glossary: ${glossaryEntries.length} terms]` });
-  console.log(`[SKILL] Business Glossary generated: ${glossaryEntries.length} terms`);
+  chatHistory.push({ role: 'assistant', content: `[Generated Business Glossary: ${glossaryEntries.length} terms, ${totalSheets} sheets]` });
+  console.log(`[SKILL] Business Glossary Excel generated: ${glossaryEntries.length} terms, ${totalSheets} sheets, ${(buffer.byteLength/1024).toFixed(0)} KB`);
 }
 
 // ── Skill detection ────────────────────────────────────────────
@@ -1643,7 +1745,7 @@ function detectSkill(text) {
     return 'lineage_excel';
   if (/^\/dictionary\b/.test(t) || /генерирай\s+data\s+dictionary|generate\s+dictionary|data\s+dictionary\s+excel/i.test(t))
     return 'data_dictionary';
-  if (/^\/glossary\b/.test(t) || /генерирай\s+glossary|generate\s+glossary|business\s+glossary/i.test(t))
+  if (/^\/glossary\b/.test(t) || /генерирай\s+glossary|generate\s+glossary|business\s+glossary|бизнес\s+речник/i.test(t))
     return 'business_glossary';
   return null;
 }
