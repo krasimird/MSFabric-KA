@@ -1249,6 +1249,389 @@ async function generateLineageExcel() {
   console.log(`[SKILL] Lineage Excel generated: ${totalTables} tables, ${totalSheets} sheets, ${(buffer.byteLength/1024).toFixed(0)} KB`);
 }
 
+// ── Generate Data Dictionary Excel ───────────────────────────
+async function generateDictionaryExcel() {
+  if (!KB) { appendMessage('assistant', '⚠️ No data loaded — cannot generate Excel.'); return; }
+  const progressDiv = document.createElement('div');
+  progressDiv.className = 'message assistant';
+  progressDiv.innerHTML = '<div class="msg-label">Assistant</div><div class="msg-bubble" id="dictProgress">📖 <b>Generating Data Dictionary Excel...</b><br></div>';
+  chatArea.appendChild(progressDiv);
+  chatArea.scrollTop = chatArea.scrollHeight;
+  const progEl = document.getElementById('dictProgress');
+  const log = (msg) => { progEl.innerHTML += msg + '<br>'; chatArea.scrollTop = chatArea.scrollHeight; };
+  await new Promise(r => setTimeout(r, 50));
+
+  // Build item name map: itemId → { name, type }
+  const itemMap = {};
+  if (KB.workspaces) for (const ws of KB.workspaces) {
+    for (const item of (ws.items || [])) {
+      itemMap[item.id] = { name: item.displayName || item.name || item.id, type: item.type, workspace: ws.name };
+    }
+  }
+
+  // Build field description map from KNOWLEDGE field_detail chunks
+  const descMap = {}; // "tableLower::fieldLower" → business_logic
+  for (const chunk of KNOWLEDGE) {
+    if (chunk.type !== 'field_detail') continue;
+    const tKey = (chunk.table || '').toLowerCase();
+    const fKey = (chunk.target_field || '').toLowerCase();
+    if (tKey && fKey) descMap[`${tKey}::${fKey}`] = chunk.business_logic || chunk.expression || '';
+  }
+
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'GenDWH Knowledge Assistant';
+  wb.created = new Date();
+  const usedNames = new Set();
+  const COL = 5;
+
+  // Collect sections: one per schema entry
+  const sections = [];
+  if (KB.schemas) for (const [itemId, val] of Object.entries(KB.schemas)) {
+    if (!val) continue;
+    const info = itemMap[itemId] || { name: itemId.slice(0, 12), type: 'Unknown' };
+    const isWarehouse = !Array.isArray(val) && val.item_type;
+    const tables = Array.isArray(val) ? val : (val.tables || []);
+    const views = isWarehouse ? (val.views || []) : [];
+    const procedures = isWarehouse ? (val.procedures || []) : [];
+    sections.push({ id: itemId, name: info.name, type: isWarehouse ? 'Warehouse' : 'Lakehouse', workspace: info.workspace, tables, views, procedures });
+  }
+  sections.sort((a, b) => a.name.localeCompare(b.name));
+
+  let totalTables = 0, totalCols = 0, totalViews = 0, totalProcs = 0;
+  for (const sec of sections) {
+    totalTables += sec.tables.length;
+    for (const t of sec.tables) totalCols += (t.columns || []).length;
+    totalViews += sec.views.length;
+    totalProcs += sec.procedures.length;
+  }
+
+  // ── TITLE PAGE ─────────────────────────────────────────────
+  log('Creating Title page...');
+  const titleWs = wb.addWorksheet(safeName('Title', usedNames));
+  titleWs.mergeCells('A1:E1');
+  const tc = titleWs.getCell('A1');
+  tc.value = 'GenDWH Data Dictionary';
+  tc.font = { name: 'Calibri Light', size: 28, bold: true, color: { argb: WHITE } };
+  tc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: TEAL } };
+  tc.alignment = { vertical: 'middle', horizontal: 'center' };
+  titleWs.getRow(1).height = 56;
+  titleWs.getCell('A3').value = `Generated: ${new Date().toISOString().slice(0,10)}`;
+  titleWs.getCell('A3').font = { name: 'Calibri', size: 11, italic: true, color: { argb: '666666' } };
+  titleWs.getCell('A5').value = 'Summary';
+  titleWs.getCell('A5').font = { name: 'Calibri Light', size: 14, bold: true, color: { argb: TEAL } };
+  const stats = [
+    [`Lakehouses / Warehouses`, sections.length],
+    [`Tables`, totalTables],
+    [`Total Columns`, totalCols],
+    [`Views`, totalViews],
+    [`Stored Procedures`, totalProcs],
+  ];
+  let tRow = 6;
+  for (const [label, val] of stats) {
+    titleWs.getCell(`A${tRow}`).value = label;
+    titleWs.getCell(`A${tRow}`).font = { name: 'Calibri', size: 10 };
+    titleWs.getCell(`C${tRow}`).value = val;
+    titleWs.getCell(`C${tRow}`).font = { name: 'Calibri', size: 10, bold: true };
+    tRow++;
+  }
+  titleWs.getCell(`A${tRow+1}`).value = 'InspirIT — GenDWH Knowledge Assistant';
+  titleWs.getCell(`A${tRow+1}`).font = { name: 'Calibri Light', size: 10, italic: true, color: { argb: '999999' } };
+  titleWs.columns = [{ width: 22 },{ width: 15 },{ width: 15 },{ width: 15 },{ width: 15 }];
+
+  // ── INDEX ──────────────────────────────────────────────────
+  log('Creating INDEX...');
+  const idxWs = wb.addWorksheet(safeName('INDEX', usedNames));
+  styleTitleRow(idxWs, 'Data Dictionary — Index', COL);
+  addBackLink(idxWs, 'Title', 'Back to Title');
+  const idxHdr = idxWs.getRow(4);
+  ['#','Name','Type','Tables','Navigate'].forEach((h,i) => { idxHdr.getCell(i+1).value = h; });
+  styleHeader(idxHdr, COL);
+
+  const secSheetNames = {};
+  let iRow = 5;
+  for (let si = 0; si < sections.length; si++) {
+    const sec = sections[si];
+    const shName = safeName(sec.name, usedNames);
+    secSheetNames[sec.id] = shName;
+    const r = idxWs.getRow(iRow);
+    r.getCell(1).value = si + 1;
+    r.getCell(2).value = sec.name;
+    r.getCell(3).value = sec.type;
+    r.getCell(4).value = sec.tables.length + (sec.views.length > 0 ? ` + ${sec.views.length}v` : '') + (sec.procedures.length > 0 ? ` + ${sec.procedures.length}p` : '');
+    r.getCell(5).value = { text: '→ Section', hyperlink: `#'${shName}'!A1` };
+    r.getCell(5).font = { name: 'Calibri', size: 10, color: { argb: TEAL }, underline: true };
+    styleDataRow(r, COL, iRow - 5);
+    iRow++;
+  }
+  idxWs.columns = [{ width: 5 },{ width: 35 },{ width: 14 },{ width: 18 },{ width: 14 }];
+  idxWs.views = [{ state: 'frozen', ySplit: 4 }];
+  await new Promise(r => setTimeout(r, 10));
+
+  // ── Section sheets (one per Lakehouse/Warehouse) ───────────
+  for (let si = 0; si < sections.length; si++) {
+    const sec = sections[si];
+    log(`Creating ${sec.name} (${sec.tables.length} tables)...`);
+    const secWs = wb.addWorksheet(secSheetNames[sec.id]);
+    styleTitleRow(secWs, `${sec.name} (${sec.type})`, COL);
+    addBackLink(secWs, 'INDEX', 'Back to INDEX');
+    let row = 4;
+
+    // ── Tables section ───────────────────────────────────────
+    for (const tbl of sec.tables) {
+      const tblName = tbl.table_name || tbl.name || 'unknown';
+      // Sub-header for table
+      secWs.mergeCells(row, 1, row, COL);
+      const thCell = secWs.getRow(row).getCell(1);
+      thCell.value = `📋 ${tblName}`;
+      thCell.font = { name: 'Calibri', size: 11, bold: true, color: { argb: WHITE } };
+      thCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: TEAL } };
+      thCell.alignment = { vertical: 'middle' };
+      secWs.getRow(row).height = 24;
+      row++;
+
+      // Column headers
+      const hdr = secWs.getRow(row);
+      ['#','Column Name','Data Type','Nullable','Description'].forEach((h,i) => { hdr.getCell(i+1).value = h; });
+      styleHeader(hdr, COL);
+      row++;
+
+      const cols = tbl.columns || [];
+      for (let ci = 0; ci < cols.length; ci++) {
+        const c = cols[ci];
+        const cName = c.column_name || c.name || '';
+        const r = secWs.getRow(row);
+        r.getCell(1).value = ci + 1;
+        r.getCell(2).value = cName;
+        r.getCell(3).value = c.data_type || '';
+        r.getCell(4).value = c.is_nullable != null ? String(c.is_nullable) : '';
+        // Look up description from field_detail
+        const descKey = `${tblName.toLowerCase()}::${cName.toLowerCase()}`;
+        r.getCell(5).value = descMap[descKey] || '';
+        if (descMap[descKey]) r.getCell(5).font = { name: 'Calibri', size: 9, italic: true };
+        styleDataRow(r, COL, ci);
+        row++;
+      }
+      if (cols.length === 0) {
+        secWs.getRow(row).getCell(1).value = '(No columns)';
+        row++;
+      }
+      row++; // blank spacer
+    }
+
+    // ── Views section (Warehouse only) ───────────────────────
+    if (sec.views.length > 0) {
+      secWs.mergeCells(row, 1, row, COL);
+      const vhCell = secWs.getRow(row).getCell(1);
+      vhCell.value = `👁️ Views (${sec.views.length})`;
+      vhCell.font = { name: 'Calibri Light', size: 13, bold: true, color: { argb: DARK_BLUE } };
+      vhCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: LAYER_COLORS.Platinum } };
+      secWs.getRow(row).height = 28;
+      row++;
+      const vHdr = secWs.getRow(row);
+      ['#','View Name','Schema','SQL Definition',''].forEach((h,i) => { vHdr.getCell(i+1).value = h; });
+      styleHeader(vHdr, COL);
+      row++;
+      for (let vi = 0; vi < sec.views.length; vi++) {
+        const vw = sec.views[vi];
+        const r = secWs.getRow(row);
+        r.getCell(1).value = vi + 1;
+        r.getCell(2).value = vw.name || '';
+        r.getCell(3).value = vw.schema || 'dbo';
+        r.getCell(4).value = (vw.definition || '').slice(0, 500);
+        r.getCell(4).font = { name: 'Courier New', size: 9 };
+        r.getCell(4).alignment = { wrapText: true, vertical: 'top' };
+        styleDataRow(r, COL, vi, [4]);
+        row++;
+      }
+      row++;
+    }
+
+    // ── Procedures section (Warehouse only) ──────────────────
+    if (sec.procedures.length > 0) {
+      secWs.mergeCells(row, 1, row, COL);
+      const phCell = secWs.getRow(row).getCell(1);
+      phCell.value = `⚙️ Stored Procedures (${sec.procedures.length})`;
+      phCell.font = { name: 'Calibri Light', size: 13, bold: true, color: { argb: DARK_BLUE } };
+      phCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: LAYER_COLORS.Gold } };
+      secWs.getRow(row).height = 28;
+      row++;
+      const pHdr = secWs.getRow(row);
+      ['#','Procedure Name','Schema','Type','SQL Definition'].forEach((h,i) => { pHdr.getCell(i+1).value = h; });
+      styleHeader(pHdr, COL);
+      row++;
+      for (let pi = 0; pi < sec.procedures.length; pi++) {
+        const sp = sec.procedures[pi];
+        const r = secWs.getRow(row);
+        r.getCell(1).value = pi + 1;
+        r.getCell(2).value = sp.name || '';
+        r.getCell(3).value = sp.schema || 'dbo';
+        r.getCell(4).value = sp.type || 'PROCEDURE';
+        r.getCell(5).value = (sp.definition || '').slice(0, 500);
+        r.getCell(5).font = { name: 'Courier New', size: 9 };
+        r.getCell(5).alignment = { wrapText: true, vertical: 'top' };
+        styleDataRow(r, COL, pi, [5]);
+        row++;
+      }
+    }
+
+    secWs.columns = [{ width: 5 },{ width: 35 },{ width: 18 },{ width: 14 },{ width: 60 }];
+    secWs.views = [{ state: 'frozen', ySplit: 3 }];
+    await new Promise(r => setTimeout(r, 10));
+  }
+
+  // ── Generate & download ────────────────────────────────────
+  log('Writing Excel file...');
+  const buffer = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(blob);
+  const totalSheets = wb.worksheets.length;
+
+  progEl.innerHTML = `📥 <b>Data Dictionary Excel ready!</b><br>
+    ${sections.length} sections, ${totalTables} tables, ${totalCols} columns, ${totalSheets} sheets<br>
+    <a href="${url}" download="GenDWH_Data_Dictionary_${new Date().toISOString().slice(0,10)}.xlsx"
+       style="display:inline-block;margin-top:8px;padding:8px 16px;background:#1C8D7A;color:white;border-radius:6px;text-decoration:none;font-weight:bold;">
+       📥 Download Excel
+    </a>`;
+  chatArea.scrollTop = chatArea.scrollHeight;
+  chatHistory.push({ role: 'assistant', content: `[Generated Data Dictionary: ${totalTables} tables, ${totalCols} columns]` });
+  console.log(`[SKILL] Dictionary Excel generated: ${totalSheets} sheets, ${(buffer.byteLength/1024).toFixed(0)} KB`);
+}
+
+// ── Generate Business Glossary (HTML) ─────────────────────────
+async function generateBusinessGlossary() {
+  if (!KB) { appendMessage('assistant', '⚠️ No data loaded — cannot generate glossary.'); return; }
+  const progressDiv = document.createElement('div');
+  progressDiv.className = 'message assistant';
+  progressDiv.innerHTML = '<div class="msg-label">Assistant</div><div class="msg-bubble" id="glossProgress">📘 <b>Generating Business Glossary...</b><br></div>';
+  chatArea.appendChild(progressDiv);
+  chatArea.scrollTop = chatArea.scrollHeight;
+  const progEl = document.getElementById('glossProgress');
+  const log = (msg) => { progEl.innerHTML += msg + '<br>'; chatArea.scrollTop = chatArea.scrollHeight; };
+  await new Promise(r => setTimeout(r, 50));
+
+  // ── Collect terms ──────────────────────────────────────────
+  log('Collecting terms from schemas and knowledge base...');
+  const termSet = new Map(); // name → { type, source, context }
+
+  // Item name map
+  const itemMap = {};
+  if (KB.workspaces) for (const ws of KB.workspaces)
+    for (const item of (ws.items || []))
+      itemMap[item.id] = { name: item.displayName || item.name || item.id, type: item.type };
+
+  // Tables & columns from schemas
+  if (KB.schemas) for (const [itemId, val] of Object.entries(KB.schemas)) {
+    if (!val) continue;
+    const info = itemMap[itemId] || { name: itemId.slice(0, 12), type: 'Unknown' };
+    const isWarehouse = !Array.isArray(val) && val.item_type;
+    const tables = Array.isArray(val) ? val : (val.tables || []);
+    for (const tbl of tables) {
+      const tName = tbl.table_name || tbl.name || '';
+      if (tName) termSet.set(tName, { type: 'Table', source: info.name });
+    }
+    if (isWarehouse && val.views) for (const vw of val.views)
+      if (vw.name) termSet.set(vw.name, { type: 'View', source: info.name });
+    if (isWarehouse && val.procedures) for (const sp of val.procedures)
+      if (sp.name) termSet.set(sp.name, { type: 'Procedure', source: info.name });
+  }
+
+  // Business terms from KNOWLEDGE chunks
+  for (const chunk of KNOWLEDGE) {
+    if (chunk.type === 'field_detail' && chunk.table)
+      termSet.set(chunk.table, { type: 'Table', source: chunk.warehouse_name || 'Knowledge Base' });
+    if (chunk.type === 'warehouse_lineage' && chunk.target_table)
+      termSet.set(chunk.target_table, { type: 'Lineage Target', source: chunk.warehouse_name || '' });
+  }
+
+  const terms = [...termSet.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  log(`Found <b>${terms.length}</b> unique terms. Asking Claude for business definitions...`);
+  await new Promise(r => setTimeout(r, 10));
+
+  // ── Call Claude for definitions (batched) ──────────────────
+  const BATCH = 40;
+  const glossaryEntries = [];
+  for (let i = 0; i < terms.length; i += BATCH) {
+    const batch = terms.slice(i, i + BATCH);
+    const termList = batch.map(([name, info]) => `- ${name} (${info.type}, from ${info.source})`).join('\n');
+    log(`Defining terms ${i + 1}–${Math.min(i + BATCH, terms.length)} of ${terms.length}...`);
+
+    try {
+      const resp = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: [{ role: 'user', content: `Define each term below in 1-2 sentences for a business glossary of a data warehouse (Medallion architecture: Bronze/Silver/Gold/Platinum). Return ONLY a JSON array of objects with "term" and "definition" keys. No markdown, no code fences.\n\n${termList}` }],
+          system: 'You are a data warehouse documentation expert. Return valid JSON only — an array of {term, definition} objects.'
+        })
+      });
+      const data = await resp.json();
+      const raw = data.content ? data.content.map(c => c.text).join('') : '[]';
+      // Parse JSON — strip any markdown fences
+      const cleaned = raw.replace(/```json\s*/gi, '').replace(/```/g, '').trim();
+      try {
+        const parsed = JSON.parse(cleaned);
+        for (const entry of parsed) {
+          const meta = termSet.get(entry.term) || batch.find(([n]) => n === entry.term)?.[1] || {};
+          glossaryEntries.push({ term: entry.term, definition: entry.definition || '', type: meta.type || '', source: meta.source || '' });
+        }
+      } catch (parseErr) {
+        // Fallback: add terms without definitions
+        for (const [name, info] of batch) glossaryEntries.push({ term: name, definition: '(definition unavailable)', type: info.type, source: info.source });
+      }
+    } catch (fetchErr) {
+      for (const [name, info] of batch) glossaryEntries.push({ term: name, definition: '(API error)', type: info.type, source: info.source });
+    }
+    await new Promise(r => setTimeout(r, 10));
+  }
+  glossaryEntries.sort((a, b) => a.term.localeCompare(b.term));
+
+  // ── Build styled HTML ──────────────────────────────────────
+  log('Building HTML document...');
+  const dateStr = new Date().toISOString().slice(0, 10);
+  let html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>GenDWH Business Glossary</title>
+<style>
+  body { font-family: Calibri, 'Segoe UI', sans-serif; margin: 40px auto; max-width: 960px; color: #333; }
+  h1 { color: #1C8D7A; border-bottom: 3px solid #1C8D7A; padding-bottom: 8px; }
+  .meta { color: #888; font-size: 0.9em; margin-bottom: 24px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+  th { background: #1C8D7A; color: white; text-align: left; padding: 10px 12px; font-weight: 600; }
+  td { padding: 8px 12px; border-bottom: 1px solid #ddd; vertical-align: top; }
+  tr:nth-child(even) { background: #F2F3F4; }
+  .type { font-size: 0.85em; color: #0B3052; font-weight: 600; }
+  .source { font-size: 0.8em; color: #888; }
+  .letter { background: #0B3052; color: white; font-size: 1.3em; font-weight: bold; padding: 6px 14px; }
+  footer { margin-top: 32px; text-align: center; color: #aaa; font-size: 0.85em; }
+</style></head><body>
+<h1>📘 GenDWH Business Glossary</h1>
+<p class="meta">Generated: ${dateStr} &nbsp;|&nbsp; ${glossaryEntries.length} terms &nbsp;|&nbsp; InspirIT — GenDWH Knowledge Assistant</p>
+<table><tr><th>#</th><th>Term</th><th>Type</th><th>Source</th><th>Business Definition</th></tr>\n`;
+
+  let currentLetter = '';
+  for (let i = 0; i < glossaryEntries.length; i++) {
+    const e = glossaryEntries[i];
+    const firstChar = (e.term[0] || '').toUpperCase();
+    if (firstChar !== currentLetter) {
+      currentLetter = firstChar;
+      html += `<tr><td class="letter" colspan="5">${currentLetter}</td></tr>\n`;
+    }
+    html += `<tr><td>${i + 1}</td><td><b>${e.term}</b></td><td class="type">${e.type}</td><td class="source">${e.source}</td><td>${e.definition}</td></tr>\n`;
+  }
+  html += `</table>\n<footer>InspirIT — GenDWH Knowledge Assistant &copy; ${new Date().getFullYear()}</footer>\n</body></html>`;
+
+  // ── Download ───────────────────────────────────────────────
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  progEl.innerHTML = `📘 <b>Business Glossary ready!</b><br>
+    ${glossaryEntries.length} terms defined<br>
+    <a href="${url}" download="GenDWH_Business_Glossary_${dateStr}.html"
+       style="display:inline-block;margin-top:8px;padding:8px 16px;background:#1C8D7A;color:white;border-radius:6px;text-decoration:none;font-weight:bold;">
+       📥 Download Glossary (HTML)
+    </a>`;
+  chatArea.scrollTop = chatArea.scrollHeight;
+  chatHistory.push({ role: 'assistant', content: `[Generated Business Glossary: ${glossaryEntries.length} terms]` });
+  console.log(`[SKILL] Business Glossary generated: ${glossaryEntries.length} terms`);
+}
+
 // ── Skill detection ────────────────────────────────────────────
 function detectSkill(text) {
   const t = text.trim().toLowerCase();
@@ -1284,9 +1667,9 @@ async function sendMessage(text) {
       if (skill === 'lineage_excel') {
         await generateLineageExcel();
       } else if (skill === 'data_dictionary') {
-        appendMessage('assistant', '⚠️ Data Dictionary Excel — coming soon!');
+        await generateDictionaryExcel();
       } else if (skill === 'business_glossary') {
-        appendMessage('assistant', '⚠️ Business Glossary — coming soon!');
+        await generateBusinessGlossary();
       }
     } catch (err) {
       appendMessage('assistant', '⚠️ Skill error: ' + err.message);
