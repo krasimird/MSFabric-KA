@@ -1398,12 +1398,16 @@ async function generateDictionaryExcel() {
       const cols = tbl.columns || [];
       for (let ci = 0; ci < cols.length; ci++) {
         const c = cols[ci];
-        const cName = c.column_name || c.name || '';
+        const cName = c.column_name || c.COLUMN_NAME || c.name || '';
+        const cType = c.data_type || c.DATA_TYPE || c.dataType || '';
+        const cNullable = c.is_nullable != null ? String(c.is_nullable)
+          : c.IS_NULLABLE != null ? String(c.IS_NULLABLE)
+          : c.nullable != null ? String(c.nullable) : '';
         const r = secWs.getRow(row);
         r.getCell(1).value = ci + 1;
         r.getCell(2).value = cName;
-        r.getCell(3).value = c.data_type || '';
-        r.getCell(4).value = c.is_nullable != null ? String(c.is_nullable) : '';
+        r.getCell(3).value = cType;
+        r.getCell(4).value = cNullable;
         // Look up description from field_detail
         const descKey = `${tblName.toLowerCase()}::${cName.toLowerCase()}`;
         r.getCell(5).value = descMap[descKey] || '';
