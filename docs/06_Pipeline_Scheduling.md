@@ -5,8 +5,8 @@
 1. Open **Microsoft Fabric** → navigate to the target workspace (`GenDWH_Administration_UWS_D`).
 2. Click **+ New** → **Data Pipeline** → name it `GenDWH_KA_Extraction_DP`.
 3. In the pipeline editor, switch to **JSON view** (code icon `</>` in the toolbar).
-4. Fabric shows a read-only structure like `{ "name": "...", "objectId": "...", "properties": { "activities": [] } }`.
-   **Do NOT replace the entire JSON.** Only replace the empty `"activities": []` array with the contents of `notebooks/GenDWH_KA_Extraction_DP.json`.
+4. Replace the entire JSON content with the contents of `notebooks/GenDWH_KA_Extraction_DP.json`.
+   The file contains a `{ "properties": { ... } }` block — this is the format Fabric expects.
 5. Click **Validate** to ensure there are no errors.
 6. Click **Save**.
 
@@ -15,8 +15,7 @@
 
 ## 2. Configuring the Schedule
 
-The JSON includes a schedule block (Mon–Fri at 06:00 FLE Standard Time / UTC+2).
-To activate it in Fabric:
+The schedule is configured manually via the Fabric UI (not in the JSON):
 
 1. Open the saved pipeline.
 2. Click **Schedule** in the top toolbar.
@@ -40,7 +39,7 @@ To activate it in Fabric:
 |--------|-------|
 | **Pipeline Runs** | Open the pipeline → **View Run History** → see status, duration, errors per run |
 | **Monitoring Hub** | Fabric left nav → **Monitor** → filter by pipeline name or date range |
-| **Failure Alerts** | The `Send_Failure_Email` activity sends an email to `krasi.donchev@inspirit.bg` on notebook failure |
+| **Failure Alerts** | Configure an email notification activity (see §5 below) |
 
 ### Common Issues
 
@@ -48,6 +47,31 @@ To activate it in Fabric:
 |---------|-------|-----|
 | Pipeline stuck in "Queued" | Fabric capacity paused | Resume the capacity in Azure portal |
 | Notebook 400 error | Notebook ID changed after redeploy | Update `notebookId` in pipeline JSON |
-| Email not sent | Office 365 connector not authorized | Re-authorize the O365 connection in pipeline settings |
 | Schedule not firing | Schedule toggled off | Re-enable in Schedule tab |
+
+## 5. Adding Email Notification on Failure (Manual Step)
+
+The `Office365Outlook` / `Office365Email` activity type requires a pre-configured **connection GUID**
+that is environment-specific, so it cannot be included in the portable JSON definition.
+Add it manually after importing the pipeline:
+
+1. Open the pipeline in **Design view** (canvas).
+2. From the **Activities** pane, drag an **Office 365 Outlook — Send an email** activity onto the canvas.
+3. Name it `Send_Failure_Email`.
+4. Connect it to `Run_Extraction_Notebook` with a **Failure** dependency (red arrow):
+   - Hover over the notebook activity → click the **red ✕** connector → drag to the email activity.
+5. Configure the email activity **Settings** tab:
+   - **Connection:** Select or create an Office 365 Outlook connection (sign in with your org account).
+   - **To:** `krasi.donchev@inspirit.bg`
+   - **Subject:** `GenDWH KA Extraction FAILED — @{pipeline().Pipeline} — @{utcNow()}`
+   - **Body:** (HTML)
+     ```
+     <h2>⚠ Extraction Pipeline Failed</h2>
+     <p><b>Pipeline:</b> @{pipeline().Pipeline}</p>
+     <p><b>Run ID:</b> @{pipeline().RunId}</p>
+     <p><b>Time:</b> @{utcNow()}</p>
+     <p>Check the Fabric Monitor for details.</p>
+     ```
+   - **Importance:** High
+6. Click **Validate** → **Save**.
 
