@@ -305,27 +305,58 @@ module.exports = async function (context, req) {
     return;
   }
 
-  // ── Test mode: just verify blob connectivity ──
+  // ── Test mode: incremental step testing ──
   const body = req.body || {};
   if (body.test) {
+    const step = body.step || "blob";
     try {
-      const svc = getBlobClient();
-      const container = svc.getContainerClient(CONTAINER);
-      const exists = await container.exists();
-      context.res = {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          status: "test_ok",
-          containerExists: exists,
-          elapsed: elapsed(),
-        }),
-      };
+      if (step === "blob") {
+        const svc = getBlobClient();
+        const container = svc.getContainerClient(CONTAINER);
+        const exists = await container.exists();
+        context.res = {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "test_ok", step, containerExists: exists, elapsed: elapsed() }),
+        };
+      } else if (step === "download") {
+        const KB = await downloadJSON(RAW_BLOB, log);
+        const queries = (KB.metadata && KB.metadata.queries) || [];
+        context.res = {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            status: "test_ok", step,
+            rawKeys: Object.keys(KB).slice(0, 20),
+            queryCount: queries.length,
+            approxSizeMB: (JSON.stringify(KB).length / 1048576).toFixed(2),
+            elapsed: elapsed(),
+          }),
+        };
+      } else if (step === "apikey") {
+        const apiKey = await getApiKey(log);
+        context.res = {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            status: "test_ok", step,
+            hasApiKey: !!apiKey,
+            keyPrefix: apiKey ? apiKey.slice(0, 8) + "..." : null,
+            elapsed: elapsed(),
+          }),
+        };
+      } else {
+        context.res = {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ error: "Unknown step. Use: blob, download, apikey" }),
+        };
+      }
     } catch (err) {
       context.res = {
         status: 500,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ error: err.message, stack: err.stack }),
+        body: JSON.stringify({ error: err.message, stack: (err.stack || "").slice(0, 2000), step, elapsed: elapsed() }),
       };
     }
     return;
