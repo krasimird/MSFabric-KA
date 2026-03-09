@@ -40,6 +40,7 @@ const CACHE_BLOB = "latest/analysis_cache.json";
 
 const BATCH_SIZE = 5;
 const BATCH_DELAY_MS = 1000;
+const TIMEOUT_MS = 38000; // 38s hard limit — leave 7s margin for cache upload + response
 
 // ── Shared state (cached per function instance) ─────────────
 let cachedApiKey = null;
@@ -386,30 +387,49 @@ module.exports = async function (context, req) {
     const cache = await downloadJSONSafe(CACHE_BLOB, {}, log);
     log(`[${elapsed()}s] Cache has ${Object.keys(cache).length} entries.`);
 
-    // 4. Analyze queries (with caching)
+    // 4. Analyze queries (with caching + hard timeout)
     log(`[${elapsed()}s] Step 3: Analyzing queries with Claude...`);
     const lineageByTable = {};
     let analyzed = 0, skipped = 0, failed = 0;
+    let timedOut = false;
+    let lastProcessedIndex = 0;
 
+    // First pass: populate lineageByTable from cache (instant, no API calls)
+    for (const q of queries) {
+      const sql = q.source_query || "";
+      if (!sql || sql.length < 20) { skipped++; continue; }
+      const qHash = hashQuery(sql);
+      const targetTable = q.target_table || q.meta_table || "unknown";
+      const layer = q.layer || "";
+      const mode = q.mode || "";
+      if (cache[qHash]) {
+        lineageByTable[targetTable] = { layer, mode, fields: cache[qHash] };
+        skipped++;
+      }
+    }
+    log(`[${elapsed()}s] ${skipped} queries already cached, ${queries.length - skipped} remaining.`);
+
+    // Second pass: analyze uncached queries with timeout guard
     for (let i = 0; i < queries.length; i += BATCH_SIZE) {
+      // ── Hard timeout check ──
+      if (Date.now() - startTime > TIMEOUT_MS) {
+        timedOut = true;
+        lastProcessedIndex = i;
+        log(`[${elapsed()}s] ⏱ Timeout approaching — stopping after ${i} queries.`);
+        break;
+      }
+
       const batch = queries.slice(i, i + BATCH_SIZE);
       const promises = batch.map(async (q) => {
         const sql = q.source_query || "";
-        if (!sql || sql.length < 20) { skipped++; return; }
-
+        if (!sql || sql.length < 20) return;
         const qHash = hashQuery(sql);
+        if (cache[qHash]) return; // already handled in first pass
+
         const targetTable = q.target_table || q.meta_table || "unknown";
         const layer = q.layer || "";
         const mode = q.mode || "";
 
-        // Check cache
-        if (cache[qHash]) {
-          lineageByTable[targetTable] = { layer, mode, fields: cache[qHash] };
-          skipped++;
-          return;
-        }
-
-        // Call Claude
         try {
           const fields = await analyzeQuery(apiKey, targetTable, layer, mode, sql, log);
           if (fields && fields.length > 0) {
@@ -425,43 +445,69 @@ module.exports = async function (context, req) {
           log(`  ✗ ${targetTable}: ${err.message}`);
           failed++;
           if (err.message.includes("429")) {
-            log("  Rate limited — waiting 10s...");
-            await sleep(10000);
+            log("  Rate limited — waiting 5s...");
+            await sleep(5000);
           }
         }
       });
 
       await Promise.all(promises);
-      log(`[${elapsed()}s] Progress: ${Math.min(i + BATCH_SIZE, queries.length)}/${queries.length} (analyzed=${analyzed}, cached=${skipped}, failed=${failed})`);
+      lastProcessedIndex = Math.min(i + BATCH_SIZE, queries.length);
+      log(`[${elapsed()}s] Progress: ${lastProcessedIndex}/${queries.length} (new=${analyzed}, cached=${skipped}, failed=${failed})`);
+
+      // Check timeout again after batch completes
+      if (Date.now() - startTime > TIMEOUT_MS) {
+        timedOut = true;
+        log(`[${elapsed()}s] ⏱ Timeout after batch — stopping.`);
+        break;
+      }
 
       if (i + BATCH_SIZE < queries.length) await sleep(BATCH_DELAY_MS);
     }
 
-    // 5. Build execution chains
+    // 5. Save cache (always — even on partial runs)
+    log(`[${elapsed()}s] Saving cache (${Object.keys(cache).length} entries)...`);
+    await uploadBlob(CACHE_BLOB, JSON.stringify(cache, null, 2), log);
+
+    if (timedOut) {
+      // Return partial result — frontend will re-trigger
+      const summary = {
+        status: "partial",
+        elapsed_seconds: parseFloat(elapsed()),
+        queries_total: queries.length,
+        queries_analyzed: analyzed,
+        queries_cached: skipped,
+        queries_failed: failed,
+        queries_remaining: queries.length - skipped - analyzed - failed,
+        cache_entries: Object.keys(cache).length,
+      };
+      log(`[${elapsed()}s] Partial result:`, JSON.stringify(summary));
+      context.res = {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(summary),
+      };
+      return;
+    }
+
+    // 6. Full completion — build final outputs
     log(`[${elapsed()}s] Step 4: Building execution chains...`);
     const chains = buildExecutionChains(KB);
     log(`Built ${chains.length} execution chains.`);
 
-    // 6. Build warehouse lineage (views + sprocs)
     log(`[${elapsed()}s] Step 5: Building warehouse lineage...`);
     const warehouseChunks = buildWarehouseLineage(KB);
     log(`Built ${warehouseChunks.length} warehouse chunks.`);
 
-    // 7. Assemble JSONL
     log(`[${elapsed()}s] Step 6: Assembling JSONL...`);
     const jsonl = assembleJSONL(lineageByTable, chains, warehouseChunks);
     const lineCount = jsonl.split("\n").length;
     log(`JSONL: ${lineCount} lines, ${jsonl.length} bytes.`);
 
-    // 8. Upload JSONL to Blob (latest + archive)
     log(`[${elapsed()}s] Step 7: Uploading to Blob Storage...`);
     await uploadBlob(JSONL_BLOB, jsonl, log);
-
     const ts = new Date().toISOString().replace(/[:.]/g, "-");
     await uploadBlob(`archive/${ts}_knowledge.jsonl`, jsonl, log);
-
-    // 9. Upload updated cache
-    await uploadBlob(CACHE_BLOB, JSON.stringify(cache, null, 2), log);
 
     const summary = {
       status: "complete",
@@ -481,7 +527,7 @@ module.exports = async function (context, req) {
     context.res = {
       status: 200,
       headers: { "Content-Type": "application/json" },
-      body: summary,
+      body: JSON.stringify(summary),
     };
   } catch (err) {
     // Only log strings — passing raw SDK error objects to context.log can crash the host

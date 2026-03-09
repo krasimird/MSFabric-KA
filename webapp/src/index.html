@@ -453,17 +453,47 @@ async function startAnalysis() {
   btn.disabled = true;
   btn.textContent = '⏳ Analyzing…';
   analysisReady = false;
-  progress.style.width = '10%';
+  progress.style.width = '5%';
   status.textContent = 'Sending analysis request to server…';
 
-  try {
-    // Trigger server-side analysis via /api/analyze
-    const resp = await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-    const text = await resp.text();
-    let result;
-    try { result = JSON.parse(text); } catch { result = { error: text || `HTTP ${resp.status}` }; }
+  let pass = 0;
+  let totalAnalyzed = 0, totalCached = 0, totalFailed = 0, totalQueries = 0;
 
-    if (!resp.ok) throw new Error(result.error || `HTTP ${resp.status}`);
+  try {
+    // Loop: keep calling /api/analyze until status is "complete" (incremental processing)
+    while (true) {
+      pass++;
+      status.textContent = `⏳ Pass ${pass}: analyzing queries on server…`;
+
+      const resp = await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      const text = await resp.text();
+      let result;
+      try { result = JSON.parse(text); } catch { result = { error: text || `HTTP ${resp.status}` }; }
+
+      if (!resp.ok) throw new Error(result.error || `HTTP ${resp.status}`);
+
+      totalQueries = result.queries_total || totalQueries;
+      totalAnalyzed += result.queries_analyzed || 0;
+      totalCached = result.queries_cached || totalCached;
+      totalFailed += result.queries_failed || 0;
+
+      const done = totalAnalyzed + totalCached + totalFailed;
+      const pct = totalQueries > 0 ? Math.min(85, Math.round((done / totalQueries) * 85)) : 10;
+      progress.style.width = pct + '%';
+
+      if (result.status === 'partial') {
+        const remaining = result.queries_remaining || (totalQueries - done);
+        status.textContent = `⏳ Pass ${pass} done (${result.elapsed_seconds}s) — ${done}/${totalQueries} queries processed, ${remaining} remaining…`;
+        console.log(`[Analysis] Pass ${pass}:`, result);
+        // Brief pause before next pass
+        await new Promise(r => setTimeout(r, 2000));
+        continue;
+      }
+
+      // status === "complete"
+      console.log(`[Analysis] Complete after ${pass} pass(es):`, result);
+      break;
+    }
 
     progress.style.width = '90%';
     status.textContent = 'Loading updated knowledge base…';
@@ -471,8 +501,8 @@ async function startAnalysis() {
     // Reload JSONL from Blob
     const jsonlResp = await fetch(JSONL_URL + '?t=' + Date.now());
     if (jsonlResp.ok) {
-      const text = await jsonlResp.text();
-      KNOWLEDGE = text.trim().split('\n').map(line => { try { return JSON.parse(line); } catch { return null; } }).filter(Boolean);
+      const jtext = await jsonlResp.text();
+      KNOWLEDGE = jtext.trim().split('\n').map(line => { try { return JSON.parse(line); } catch { return null; } }).filter(Boolean);
     }
 
     analysisReady = true;
@@ -480,7 +510,7 @@ async function startAnalysis() {
     buildReportChunksClientSide();
     buildSemanticModelChunks();
     progress.style.width = '100%';
-    status.textContent = `✅ Done in ${result.elapsed_seconds}s — ${result.queries_analyzed} analyzed, ${result.queries_cached} cached, ${result.queries_failed || 0} failed. ${KNOWLEDGE.length} chunks.`;
+    status.textContent = `✅ Done in ${pass} pass(es) — ${totalAnalyzed} analyzed, ${totalCached} cached, ${totalFailed} failed. ${KNOWLEDGE.length} chunks.`;
     btn.textContent = '🔄 Re-analyze knowledge base';
   } catch (err) {
     status.textContent = '❌ Analysis failed: ' + err.message;
