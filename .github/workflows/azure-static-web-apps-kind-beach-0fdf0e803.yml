@@ -34,6 +34,7 @@ jobs:
           app_location: "webapp/src" # App source code path
           api_location: "webapp/api" # Api source code path - optional
           output_location: "" # Built app content directory - optional
+          skip_api_build: true # We run npm install ourselves — skip Oryx rebuild
           ###### End of Repository/Build Configurations ######
 
   close_pull_request_job:

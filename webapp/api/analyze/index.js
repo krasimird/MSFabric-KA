@@ -13,9 +13,16 @@
  * Rate limiting: 5 parallel queries, 1s between batches.
  */
 
-const { BlobServiceClient } = require("@azure/storage-blob");
-const { DefaultAzureCredential } = require("@azure/identity");
-const { SecretClient } = require("@azure/keyvault-secrets");
+// ── Safe module imports (prevent host crash on cold start) ──
+let BlobServiceClient, DefaultAzureCredential, SecretClient;
+let moduleLoadError = null;
+try {
+  ({ BlobServiceClient } = require("@azure/storage-blob"));
+  ({ DefaultAzureCredential } = require("@azure/identity"));
+  ({ SecretClient } = require("@azure/keyvault-secrets"));
+} catch (err) {
+  moduleLoadError = `Failed to load Azure SDK modules: ${err.message}`;
+}
 const crypto = require("crypto");
 
 // ── Config ──────────────────────────────────────────────────
@@ -56,20 +63,6 @@ async function getApiKey(log) {
     return null;
   }
 }
-
-// ── Load local.settings.json fallback (SWA CLI doesn't always inject Values as env vars) ──
-function loadLocalSettings() {
-  try {
-    const path = require("path");
-    const fs = require("fs");
-    const fp = path.join(__dirname, "..", "local.settings.json");
-    const data = JSON.parse(fs.readFileSync(fp, "utf8"));
-    for (const [k, v] of Object.entries(data.Values || {})) {
-      if (!process.env[k] && v) process.env[k] = v;
-    }
-  } catch { /* not critical */ }
-}
-loadLocalSettings();
 
 // ── Blob helpers ────────────────────────────────────────────
 function getBlobClient() {
@@ -297,6 +290,17 @@ module.exports = async function (context, req) {
   context.log("Analyze function invoked");
   const log = (...args) => context.log.info(...args);
   const startTime = Date.now();
+
+  // Fail fast if Azure SDK modules didn't load
+  if (moduleLoadError) {
+    context.log.error("Module load error:", moduleLoadError);
+    context.res = {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ error: moduleLoadError }),
+    };
+    return;
+  }
 
   try {
     // 1. Get API key
