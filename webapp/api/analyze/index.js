@@ -97,7 +97,12 @@ async function uploadBlob(blobPath, content, log) {
 async function downloadJSONSafe(blobPath, fallback, log) {
   try { return await downloadJSON(blobPath, log); }
   catch (err) {
-    if (err.statusCode === 404) { log(`${blobPath} not found, using fallback.`); return fallback; }
+    const code = err.statusCode || (err.details && err.details.errorCode) || "";
+    if (code === 404 || String(err.message).includes("BlobNotFound") || String(err.message).includes("404")) {
+      log(`${blobPath} not found (${code}), using fallback.`);
+      return fallback;
+    }
+    log(`downloadJSONSafe error for ${blobPath}: ${err.message}`);
     throw err;
   }
 }
@@ -346,11 +351,31 @@ module.exports = async function (context, req) {
             elapsed: elapsed(),
           }),
         };
+      } else if (step === "full-dry") {
+        // Run entire handler EXCEPT Claude API calls — to isolate crash point
+        const apiKey = await getApiKey(log);
+        log(`[${elapsed()}s] apiKey: ${!!apiKey}`);
+        const KB2 = await downloadJSON(RAW_BLOB, log);
+        const queries2 = (KB2.metadata && KB2.metadata.queries) || [];
+        log(`[${elapsed()}s] queries: ${queries2.length}`);
+        const cache2 = await downloadJSONSafe(CACHE_BLOB, {}, log);
+        log(`[${elapsed()}s] cache entries: ${Object.keys(cache2).length}`);
+        context.res = {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            status: "test_ok", step,
+            hasApiKey: !!apiKey,
+            queryCount: queries2.length,
+            cacheEntries: Object.keys(cache2).length,
+            elapsed: elapsed(),
+          }),
+        };
       } else {
         context.res = {
           status: 400,
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ error: "Unknown step. Use: blob, download, apikey" }),
+          body: JSON.stringify({ error: "Unknown step. Use: blob, download, apikey, full-dry" }),
         };
       }
     } catch (err) {
