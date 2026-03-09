@@ -287,27 +287,181 @@ function assembleJSONL(lineageByTable, chains, warehouseChunks) {
 // MAIN HANDLER
 // ═══════════════════════════════════════════════════════════════
 // ═══════════════════════════════════════════════════════════════
-// MAIN HANDLER — DIAGNOSTIC MODE (temporary)
+// MAIN HANDLER
 // ═══════════════════════════════════════════════════════════════
 module.exports = async function (context, req) {
-  context.log("Analyze function invoked — diagnostic mode");
+  context.log("Analyze function invoked");
+  const log = (...args) => context.log.info(...args);
+  const startTime = Date.now();
+  const elapsed = () => ((Date.now() - startTime) / 1000).toFixed(1);
 
-  const diag = {
-    status: "diagnostic",
-    timestamp: new Date().toISOString(),
-    nodeVersion: process.version,
-    moduleLoadError: moduleLoadError,
-    envKeys: Object.keys(process.env).filter(k =>
-      ["BLOB_CONNECTION_STRING", "ANTHROPIC_API_KEY", "FUNCTIONS_WORKER_RUNTIME", "AzureWebJobsStorage"].includes(k)
-    ),
-    hasBlobSdk: typeof BlobServiceClient === "function",
-    hasIdentitySdk: typeof DefaultAzureCredential === "function",
-    hasSecretSdk: typeof SecretClient === "function",
-  };
+  // Fail fast if Azure SDK modules didn't load
+  if (moduleLoadError) {
+    context.res = {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ error: moduleLoadError }),
+    };
+    return;
+  }
 
-  context.res = {
-    status: 200,
-    headers: { "Content-Type": "application/json" },
-    body: diag,
-  };
+  // ── Test mode: just verify blob connectivity ──
+  const body = req.body || {};
+  if (body.test) {
+    try {
+      const svc = getBlobClient();
+      const container = svc.getContainerClient(CONTAINER);
+      const exists = await container.exists();
+      context.res = {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status: "test_ok",
+          containerExists: exists,
+          elapsed: elapsed(),
+        }),
+      };
+    } catch (err) {
+      context.res = {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ error: err.message, stack: err.stack }),
+      };
+    }
+    return;
+  }
+
+  try {
+    // 1. Get API key
+    const apiKey = await getApiKey(log);
+    if (!apiKey) {
+      context.res = {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ error: "ANTHROPIC_API_KEY not configured." }),
+      };
+      return;
+    }
+    log(`[${elapsed()}s] API key ready`);
+
+    // 2. Read raw export from Blob
+    log(`[${elapsed()}s] Step 1: Reading raw export from Blob...`);
+    const KB = await downloadJSON(RAW_BLOB, log);
+    const queries = (KB.metadata && KB.metadata.queries) || [];
+    log(`[${elapsed()}s] Found ${queries.length} SQL queries to analyze.`);
+
+    // 3. Load existing cache
+    log(`[${elapsed()}s] Step 2: Loading analysis cache...`);
+    const cache = await downloadJSONSafe(CACHE_BLOB, {}, log);
+    log(`[${elapsed()}s] Cache has ${Object.keys(cache).length} entries.`);
+
+    // 4. Analyze queries (with caching)
+    log(`[${elapsed()}s] Step 3: Analyzing queries with Claude...`);
+    const lineageByTable = {};
+    let analyzed = 0, skipped = 0, failed = 0;
+
+    for (let i = 0; i < queries.length; i += BATCH_SIZE) {
+      const batch = queries.slice(i, i + BATCH_SIZE);
+      const promises = batch.map(async (q) => {
+        const sql = q.source_query || "";
+        if (!sql || sql.length < 20) { skipped++; return; }
+
+        const qHash = hashQuery(sql);
+        const targetTable = q.target_table || q.meta_table || "unknown";
+        const layer = q.layer || "";
+        const mode = q.mode || "";
+
+        // Check cache
+        if (cache[qHash]) {
+          lineageByTable[targetTable] = { layer, mode, fields: cache[qHash] };
+          skipped++;
+          return;
+        }
+
+        // Call Claude
+        try {
+          const fields = await analyzeQuery(apiKey, targetTable, layer, mode, sql, log);
+          if (fields && fields.length > 0) {
+            cache[qHash] = fields;
+            lineageByTable[targetTable] = { layer, mode, fields };
+            analyzed++;
+            log(`  ✓ ${targetTable}: ${fields.length} fields`);
+          } else {
+            log(`  ⚠ ${targetTable}: no fields parsed`);
+            failed++;
+          }
+        } catch (err) {
+          log(`  ✗ ${targetTable}: ${err.message}`);
+          failed++;
+          if (err.message.includes("429")) {
+            log("  Rate limited — waiting 10s...");
+            await sleep(10000);
+          }
+        }
+      });
+
+      await Promise.all(promises);
+      log(`[${elapsed()}s] Progress: ${Math.min(i + BATCH_SIZE, queries.length)}/${queries.length} (analyzed=${analyzed}, cached=${skipped}, failed=${failed})`);
+
+      if (i + BATCH_SIZE < queries.length) await sleep(BATCH_DELAY_MS);
+    }
+
+    // 5. Build execution chains
+    log(`[${elapsed()}s] Step 4: Building execution chains...`);
+    const chains = buildExecutionChains(KB);
+    log(`Built ${chains.length} execution chains.`);
+
+    // 6. Build warehouse lineage (views + sprocs)
+    log(`[${elapsed()}s] Step 5: Building warehouse lineage...`);
+    const warehouseChunks = buildWarehouseLineage(KB);
+    log(`Built ${warehouseChunks.length} warehouse chunks.`);
+
+    // 7. Assemble JSONL
+    log(`[${elapsed()}s] Step 6: Assembling JSONL...`);
+    const jsonl = assembleJSONL(lineageByTable, chains, warehouseChunks);
+    const lineCount = jsonl.split("\n").length;
+    log(`JSONL: ${lineCount} lines, ${jsonl.length} bytes.`);
+
+    // 8. Upload JSONL to Blob (latest + archive)
+    log(`[${elapsed()}s] Step 7: Uploading to Blob Storage...`);
+    await uploadBlob(JSONL_BLOB, jsonl, log);
+
+    const ts = new Date().toISOString().replace(/[:.]/g, "-");
+    await uploadBlob(`archive/${ts}_knowledge.jsonl`, jsonl, log);
+
+    // 9. Upload updated cache
+    await uploadBlob(CACHE_BLOB, JSON.stringify(cache, null, 2), log);
+
+    const summary = {
+      status: "complete",
+      elapsed_seconds: parseFloat(elapsed()),
+      queries_total: queries.length,
+      queries_analyzed: analyzed,
+      queries_cached: skipped,
+      queries_failed: failed,
+      lineage_tables: Object.keys(lineageByTable).length,
+      execution_chains: chains.length,
+      warehouse_chunks: warehouseChunks.length,
+      jsonl_lines: lineCount,
+      jsonl_bytes: jsonl.length,
+    };
+    log(`[${elapsed()}s] Done!`, JSON.stringify(summary));
+
+    context.res = {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+      body: summary,
+    };
+  } catch (err) {
+    context.log.error(`[${elapsed()}s] Fatal error:`, err);
+    context.res = {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        error: err.message,
+        stack: err.stack,
+        elapsed_seconds: elapsed(),
+      }),
+    };
+  }
 };
