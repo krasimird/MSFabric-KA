@@ -453,13 +453,15 @@ module.exports = async function (context, req) {
       body: summary,
     };
   } catch (err) {
-    context.log.error(`[${elapsed()}s] Fatal error:`, err);
+    // Only log strings — passing raw SDK error objects to context.log can crash the host
+    context.log.error(`[${elapsed()}s] Fatal error: ${err.message}`);
+    context.log.error(err.stack || "(no stack)");
     context.res = {
       status: 500,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         error: err.message,
-        stack: err.stack,
+        stack: (err.stack || "").slice(0, 2000),
         elapsed_seconds: elapsed(),
       }),
     };
