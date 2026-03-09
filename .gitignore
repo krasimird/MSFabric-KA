@@ -7,6 +7,7 @@ node_modules/
 # Environment / secrets
 .env
 .env.local
+local.settings.json
 
 # Knowledge base (generated, large)
 webapp/public/data/gendwh_knowledge.jsonl
