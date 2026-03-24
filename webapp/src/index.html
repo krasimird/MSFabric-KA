@@ -467,8 +467,9 @@ async function loadData() {
           try { return JSON.parse(line); } catch { return null; }
         }).filter(Boolean);
         analysisReady = true;
-        buildReportChunksClientSide();
-        buildSemanticModelChunks();
+        // Only generate client-side chunks if server didn't already generate them
+        if (!KNOWLEDGE.some(c => c.type === 'semantic_model_overview')) buildSemanticModelChunks();
+        buildReportChunksClientSide(); // Adds detailed report_page chunks not in server JSONL
         buildCrossReferences();
         progressBar.style.width = '100%';
         analysisStatus.textContent = `✅ Knowledge base loaded — ${KNOWLEDGE.length} chunks`;
@@ -584,8 +585,9 @@ async function startAnalysis() {
     }
 
     analysisReady = true;
-    buildReportChunksClientSide();
-    buildSemanticModelChunks();
+    // Only generate client-side chunks if server didn't already generate them
+    if (!KNOWLEDGE.some(c => c.type === 'semantic_model_overview')) buildSemanticModelChunks();
+    buildReportChunksClientSide(); // Adds detailed report_page chunks not in server JSONL
     buildCrossReferences();
     progress.style.width = '100%';
     status.textContent = `✅ Done in ${pass} pass(es) — ${totalAnalyzed} analyzed, ${totalCached} cached, ${totalFailed} failed. ${KNOWLEDGE.length} chunks.`;

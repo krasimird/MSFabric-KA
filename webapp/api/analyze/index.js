@@ -141,21 +141,29 @@ function chunkToText(chunk) {
   if (chunk.type) parts.push(`type: ${chunk.type}`);
   if (chunk.id) parts.push(`id: ${chunk.id}`);
   if (chunk.table) parts.push(`table: ${chunk.table}`);
+  if (chunk.table_name) parts.push(`table: ${chunk.table_name}`);
+  if (chunk.lakehouse) parts.push(`lakehouse: ${chunk.lakehouse}`);
   if (chunk.model_name) parts.push(`model: ${chunk.model_name}`);
   if (chunk.pipeline) parts.push(`pipeline: ${chunk.pipeline}`);
+  if (chunk.notebook) parts.push(`notebook: ${chunk.notebook}`);
   if (chunk.report_name) parts.push(`report: ${chunk.report_name}`);
   if (chunk.layer) parts.push(`layer: ${chunk.layer}`);
+  if (chunk.zone) parts.push(`zone: ${chunk.zone}`);
+  if (chunk.warehouse_name) parts.push(`warehouse: ${chunk.warehouse_name}`);
   if (chunk.summary) parts.push(chunk.summary);
   if (chunk.target_field) parts.push(`field: ${chunk.target_field}`);
   if (chunk.source_table) parts.push(`source: ${chunk.source_table}.${chunk.source_column || ""}`);
   if (chunk.expression) parts.push(`expr: ${chunk.expression}`);
   if (chunk.business_logic) parts.push(chunk.business_logic);
   if (chunk.definition) parts.push(chunk.definition.slice(0, 2000));
-  if (chunk.description) parts.push(chunk.description);
+  if (chunk.description) parts.push(chunk.description.slice(0, 2000));
   if (chunk.tables_detail) parts.push(JSON.stringify(chunk.tables_detail).slice(0, 3000));
   if (chunk.measures) parts.push(chunk.measures.map(m => `${m.name}: ${m.expression || ""}`).join("; ").slice(0, 3000));
   if (chunk.columns) parts.push(chunk.columns.map(c => c.name || c).join(", ").slice(0, 1000));
+  if (chunk.items) parts.push((Array.isArray(chunk.items) ? chunk.items : []).join(", ").slice(0, 2000));
   if (chunk.schema && chunk.name) parts.push(`${chunk.schema}.${chunk.name}`);
+  if (chunk.table_references) parts.push(`references: ${chunk.table_references.join(", ").slice(0, 1000)}`);
+  if (chunk.activities) parts.push(`activities: ${chunk.activities.map(a => a.name || a).join(", ").slice(0, 1000)}`);
   return parts.join("\n") || JSON.stringify(chunk).slice(0, 4000);
 }
 
@@ -293,6 +301,19 @@ function buildWarehouseLineage(KB) {
   for (const [itemId, val] of Object.entries(KB.schemas)) {
     if (!val || Array.isArray(val) || !val.item_type) continue;
     const warehouseName = whNameMap[itemId] || '';
+    // Tables
+    for (const tbl of (val.tables || [])) {
+      chunks.push({
+        type: "warehouse_table",
+        id: `${tbl.schema || "dbo"}.${tbl.name}`,
+        warehouse_id: itemId,
+        warehouse_name: warehouseName,
+        schema: tbl.schema || "dbo",
+        name: tbl.name,
+        columns: (tbl.columns || []).map(c => ({ name: c.name, dataType: c.dataType, nullable: c.nullable })),
+        column_count: (tbl.columns || []).length,
+      });
+    }
     // Views
     for (const vw of (val.views || [])) {
       chunks.push({
@@ -322,8 +343,456 @@ function buildWarehouseLineage(KB) {
   return chunks;
 }
 
+// ── Helper: build item lookup (id → {name, type, workspace}) ─
+function buildItemLookup(KB) {
+  const map = {};
+  if (!KB.workspaces) return map;
+  for (const ws of KB.workspaces) {
+    const wsName = ws.displayName || ws.name || '';
+    for (const item of (ws.items || [])) {
+      map[item.id] = { name: item.displayName || item.name || item.id, type: item.type, workspace: wsName };
+    }
+  }
+  return map;
+}
+
+// ── Detect data zone from Lakehouse/Warehouse name ──────────
+function detectZone(name) {
+  const n = (name || '').toLowerCase();
+  if (n.includes('bronze')) return 'Bronze';
+  if (n.includes('silverraw') || n.includes('silver_raw')) return 'Silver Raw';
+  if (n.includes('silverstg') || n.includes('silver_stg') || n.includes('silver_stage')) return 'Silver Stage';
+  if (n.includes('gold')) return 'Gold';
+  if (n.includes('cdwh') || n.includes('platinum')) return 'Platinum';
+  if (n.includes('administration') || n.includes('admin')) return 'Administration';
+  return 'Unknown';
+}
+
+// ── Lakehouse chunks (schema arrays) ────────────────────────
+function buildLakehouseChunks(KB, itemLookup) {
+  const chunks = [];
+  if (!KB.schemas) return chunks;
+  for (const [itemId, val] of Object.entries(KB.schemas)) {
+    if (!val || !Array.isArray(val)) continue; // Lakehouse schemas are arrays
+    const info = itemLookup[itemId] || {};
+    const lhName = info.name || itemId;
+    const wsName = info.workspace || '';
+    const zone = detectZone(lhName);
+    for (const tbl of val) {
+      const cols = (tbl.columns || []).map(c => ({ name: c.name, dataType: c.dataType, nullable: c.nullable }));
+      chunks.push({
+        type: "lakehouse_table",
+        id: `${lhName}::${tbl.table_name}`,
+        lakehouse: lhName,
+        workspace: wsName,
+        zone: zone,
+        table_name: tbl.table_name,
+        table_type: tbl.table_type || 'managed',
+        columns: cols,
+        column_count: cols.length,
+      });
+    }
+  }
+  return chunks;
+}
+
+// ── Bronze metadata chunks ──────────────────────────────────
+function buildBronzeMetaChunks(KB) {
+  const chunks = [];
+  if (!KB.metadata || !KB.metadata.bronze_meta) return chunks;
+  for (const entry of KB.metadata.bronze_meta) {
+    const tblName = entry.table_name || entry.name || '';
+    if (!tblName) continue;
+    const cols = (entry.columns || []).map(c => ({ name: c.name, dataType: c.dataType || c.data_type, nullable: c.nullable }));
+    chunks.push({
+      type: "bronze_table",
+      id: `bronze::${tblName}`,
+      table_name: tblName,
+      zone: "Bronze",
+      source_system: entry.source_system || entry.source || '',
+      columns: cols,
+      column_count: cols.length,
+      row_count: entry.row_count || null,
+      last_loaded: entry.last_loaded || entry.last_modified || null,
+    });
+  }
+  return chunks;
+}
+
+// ── TMDL table parser ───────────────────────────────────────
+function _parseTmdlTable(payload) {
+  const lines = payload.split('\n');
+  if (lines.length === 0) return null;
+  const tblMatch = lines[0].match(/^table\s+(?:'([^']+)'|"([^"]+)"|(.+))/);
+  if (!tblMatch) return null;
+  const tableName = (tblMatch[1] || tblMatch[2] || tblMatch[3] || '').trim();
+  const result = { name: tableName, columns: [], measures: [], isCalculated: false };
+  let i = 1;
+  while (i < lines.length) {
+    const trimmed = lines[i].trimStart();
+    if (/^column\s+/i.test(trimmed)) {
+      const col = _parseTmdlColumn(lines, i);
+      result.columns.push(col.data);
+      i = col.nextLine; continue;
+    }
+    if (/^measure\s+/i.test(trimmed)) {
+      const meas = _parseTmdlMeasure(lines, i);
+      result.measures.push(meas.data);
+      i = meas.nextLine; continue;
+    }
+    if (/^partition\s+/i.test(trimmed)) {
+      if (/=\s*calculated/i.test(trimmed)) result.isCalculated = true;
+    }
+    i++;
+  }
+  return result;
+}
+
+function _parseTmdlColumn(lines, startIdx) {
+  const header = lines[startIdx].trimStart();
+  const nameMatch = header.match(/^column\s+(?:'([^']+)'|"([^"]+)"|(\S+))/i);
+  const name = nameMatch ? (nameMatch[1] || nameMatch[2] || nameMatch[3] || '').trim() : 'unknown';
+  const col = { name };
+  let i = startIdx + 1;
+  while (i < lines.length) {
+    const trimmed = lines[i].trimStart();
+    if (/^(column|measure|hierarchy|partition|table|annotation\s+PBI_Id)\s*/i.test(trimmed) && trimmed !== '') break;
+    if (/^dataType:\s*/i.test(trimmed)) col.dataType = trimmed.split(':')[1].trim();
+    else if (/^sourceColumn:\s*/i.test(trimmed)) col.sourceColumn = trimmed.split(':').slice(1).join(':').trim();
+    else if (/^summarizeBy:\s*/i.test(trimmed)) col.summarizeBy = trimmed.split(':')[1].trim();
+    else if (/^isHidden/i.test(trimmed) && !trimmed.includes(':')) col.isHidden = true;
+    else if (/^description:\s*/i.test(trimmed)) col.description = trimmed.replace(/^description:\s*/i, '').trim();
+    i++;
+  }
+  return { data: col, nextLine: i };
+}
+
+function _parseTmdlMeasure(lines, startIdx) {
+  const header = lines[startIdx].trimStart();
+  const mMatch = header.match(/^measure\s+(?:'([^']+)'|"([^"]+)"|(\S+?))\s*=/i);
+  const name = mMatch ? (mMatch[1] || mMatch[2] || mMatch[3] || '').trim() : 'unknown';
+  const eqIdx = header.indexOf('=');
+  let afterEq = eqIdx >= 0 ? header.slice(eqIdx + 1).trim() : '';
+  const exprLines = [];
+  let inBacktickBlock = false;
+  if (afterEq.startsWith('```')) { inBacktickBlock = true; exprLines.push(afterEq); }
+  else if (afterEq) exprLines.push(afterEq);
+  const mData = { name, expression: '', formatString: '', description: '', displayFolder: '' };
+  let i = startIdx + 1;
+  while (i < lines.length) {
+    const trimmed = lines[i].trimStart();
+    if (/^(column|measure|hierarchy|partition|table|annotation\s+PBI_Id)\s*/i.test(trimmed) && !inBacktickBlock) break;
+    if (inBacktickBlock) { exprLines.push(lines[i]); if (trimmed.includes('```')) inBacktickBlock = false; i++; continue; }
+    if (/^formatString:\s*/i.test(trimmed)) { mData.formatString = trimmed.replace(/^formatString:\s*/i, '').trim(); i++; continue; }
+    if (/^description:\s*/i.test(trimmed)) { mData.description = trimmed.replace(/^description:\s*/i, '').trim(); i++; continue; }
+    if (/^displayFolder:\s*/i.test(trimmed)) { mData.displayFolder = trimmed.replace(/^displayFolder:\s*/i, '').trim(); i++; continue; }
+    if (/^(lineageTag|changedProperty|annotation|isHidden)\s*/i.test(trimmed)) { i++; continue; }
+    if (trimmed.includes('```')) { exprLines.push(lines[i]); inBacktickBlock = !inBacktickBlock; i++; continue; }
+    if (trimmed === '') { i++; continue; }
+    if (/^\t/.test(lines[i]) || /^\s{2,}/.test(lines[i])) exprLines.push(lines[i]);
+    i++;
+  }
+  mData.expression = exprLines.join('\n').replace(/```/g, '').trim();
+  return { data: mData, nextLine: i };
+}
+
+function _parseTmdlRelationships(payload) {
+  const rels = [];
+  const blocks = payload.split(/^relationship\s+/m);
+  for (let bi = 1; bi < blocks.length; bi++) {
+    const block = blocks[bi];
+    const fromCol = block.match(/fromColumn:\s*(.+)/);
+    const toCol = block.match(/toColumn:\s*(.+)/);
+    const crossFilter = block.match(/crossFilteringBehavior:\s*(.+)/);
+    const isActiveMatch = block.match(/isActive:\s*(.+)/);
+    if (fromCol && toCol) {
+      const fp = fromCol[1].trim().split('.'), tp = toCol[1].trim().split('.');
+      rels.push({
+        from_table: fp[0].replace(/^['"]|['"]$/g, ''), from_column: (fp[1] || '').replace(/^['"]|['"]$/g, ''),
+        to_table: tp[0].replace(/^['"]|['"]$/g, ''), to_column: (tp[1] || '').replace(/^['"]|['"]$/g, ''),
+        crossFilteringBehavior: crossFilter ? crossFilter[1].trim() : 'oneDirection',
+        isActive: isActiveMatch ? isActiveMatch[1].trim().toLowerCase() !== 'false' : true,
+      });
+    }
+  }
+  return rels;
+}
+
+// ── Semantic Model chunks ───────────────────────────────────
+function buildSemanticModelChunks(KB, itemLookup) {
+  const chunks = [];
+  if (!KB.definitions) return chunks;
+  for (const [itemId, defParts] of Object.entries(KB.definitions)) {
+    const info = itemLookup[itemId] || {};
+    if (info.type !== 'SemanticModel') continue;
+    if (!Array.isArray(defParts)) continue;
+    const modelName = info.name || itemId;
+    const wsName = info.workspace || '';
+
+    const tablesMap = {};
+    let relationships = [];
+    for (const part of defParts) {
+      const p = part.path || '';
+      const payload = part.payload || '';
+      if (p.startsWith('definition/tables/') && p.endsWith('.tmdl')) {
+        const parsed = _parseTmdlTable(payload);
+        if (!parsed) continue;
+        if (parsed.name.startsWith('LocalDateTable') || parsed.name.startsWith('DateTableTemplate')) continue;
+        tablesMap[parsed.name] = parsed;
+      }
+      if (p.endsWith('relationships.tmdl')) {
+        relationships = _parseTmdlRelationships(payload);
+      }
+    }
+
+    const tableNames = Object.keys(tablesMap);
+    if (tableNames.length === 0) continue;
+    const allMeasures = [];
+    for (const [tbl, inf] of Object.entries(tablesMap)) {
+      if (inf.measures.length > 0) allMeasures.push(...inf.measures);
+    }
+    const totalCols = Object.values(tablesMap).reduce((s, t) => s + t.columns.length, 0);
+
+    // Overview chunk
+    chunks.push({
+      type: 'semantic_model_overview', id: modelName,
+      model_name: modelName, model_id: itemId, workspace: wsName,
+      table_count: tableNames.length, measure_count: allMeasures.length,
+      column_count: totalCols, relationship_count: relationships.length,
+      tables: tableNames,
+      tables_detail: Object.fromEntries(Object.entries(tablesMap).map(([k, v]) => [k, {
+        columns: v.columns, measure_count: v.measures.length, isCalculated: v.isCalculated,
+      }])),
+      summary: `Semantic Model ${modelName}: ${tableNames.length} tables, ${totalCols} columns, ${allMeasures.length} measures, ${relationships.length} relationships`,
+    });
+
+    // Per-table measures chunks
+    for (const [tblName, tblInfo] of Object.entries(tablesMap)) {
+      if (tblInfo.measures.length === 0) continue;
+      const measText = tblInfo.measures.map(m => `${m.name} = ${m.expression}`).join('\n');
+      chunks.push({
+        type: 'semantic_model_measures', id: `${modelName}::${tblName}`,
+        model_name: modelName, model_id: itemId, table_name: tblName,
+        measures: tblInfo.measures,
+        summary: `Measures in ${modelName}.${tblName}: ${tblInfo.measures.map(m => m.name).join(', ')}`,
+        description: measText.slice(0, 3000),
+      });
+    }
+
+    // Relationships chunk
+    if (relationships.length > 0) {
+      const relText = relationships.map(r => `${r.from_table}.${r.from_column} → ${r.to_table}.${r.to_column}`).join('\n');
+      chunks.push({
+        type: 'semantic_model_relationships', id: `${modelName}::relationships`,
+        model_name: modelName, model_id: itemId,
+        relationships: relationships,
+        summary: `Relationships in ${modelName}: ${relationships.length} relationships`,
+        description: relText.slice(0, 3000),
+      });
+    }
+  }
+  return chunks;
+}
+
+// ── Pipeline chunks ─────────────────────────────────────────
+function buildPipelineChunks(KB, itemLookup) {
+  const chunks = [];
+  if (!KB.definitions) return chunks;
+  for (const [itemId, defParts] of Object.entries(KB.definitions)) {
+    const info = itemLookup[itemId] || {};
+    if (info.type !== 'DataPipeline') continue;
+    if (!Array.isArray(defParts)) continue;
+    const pName = info.name || itemId;
+    const wsName = info.workspace || '';
+    const pipelinePart = defParts.find(p => p.path === 'pipeline-content.json');
+    if (!pipelinePart || !pipelinePart.payload) continue;
+    let pDef;
+    try { pDef = JSON.parse(pipelinePart.payload); } catch { continue; }
+    const activities = (pDef.properties && pDef.properties.activities) || [];
+    const actSummaries = activities.map(a => {
+      const deps = (a.dependsOn || []).map(d => d.activity).filter(Boolean);
+      return { name: a.name, type: a.type, dependsOn: deps };
+    });
+    // Extract notebook references
+    const nbRefs = [];
+    const nbMatches = pipelinePart.payload.match(/Phase_\d+_\w+|GenDWH_\w+/g) || [];
+    for (const nb of new Set(nbMatches)) nbRefs.push(nb);
+
+    chunks.push({
+      type: 'pipeline_overview', id: pName,
+      pipeline: pName, pipeline_id: itemId, workspace: wsName,
+      activity_count: activities.length,
+      activities: actSummaries,
+      notebook_references: nbRefs,
+      summary: `Pipeline ${pName}: ${activities.length} activities (${actSummaries.map(a => a.name).join(', ')})`,
+    });
+  }
+  return chunks;
+}
+
+// ── Notebook chunks ─────────────────────────────────────────
+function buildNotebookChunks(KB, itemLookup) {
+  const chunks = [];
+  if (!KB.definitions) return chunks;
+  for (const [itemId, defParts] of Object.entries(KB.definitions)) {
+    const info = itemLookup[itemId] || {};
+    if (info.type !== 'Notebook') continue;
+    if (!Array.isArray(defParts)) continue;
+    const nbName = info.name || itemId;
+    const wsName = info.workspace || '';
+    // Find the notebook source (usually notebook-content.py or .ipynb)
+    let sourceCode = '';
+    for (const part of defParts) {
+      if (part.payload && part.payload.length > sourceCode.length) sourceCode = part.payload;
+    }
+    if (!sourceCode) continue;
+    // Extract table references from code
+    const tableRefs = [];
+    const tblMatches = sourceCode.match(/(?:FROM|JOIN|INTO|TABLE)\s+[`"']?([a-z_][a-z0-9_.]*)/gi) || [];
+    for (const m of tblMatches) {
+      const t = m.replace(/^(?:FROM|JOIN|INTO|TABLE)\s+[`"']?/i, '').trim();
+      if (t && t.length > 2 && !['true', 'false', 'none', 'null'].includes(t.toLowerCase())) tableRefs.push(t);
+    }
+    // Detect language
+    const lang = sourceCode.includes('spark.sql') || sourceCode.includes('import pyspark') ? 'PySpark'
+      : sourceCode.includes('CREATE ') || sourceCode.includes('SELECT ') ? 'SQL' : 'Python';
+
+    chunks.push({
+      type: 'notebook_overview', id: nbName,
+      notebook: nbName, notebook_id: itemId, workspace: wsName,
+      language: lang,
+      size_chars: sourceCode.length,
+      table_references: [...new Set(tableRefs)].slice(0, 100),
+      summary: `Notebook ${nbName} (${lang}, ${Math.round(sourceCode.length / 1024)}KB): references tables ${[...new Set(tableRefs)].slice(0, 20).join(', ')}`,
+      description: sourceCode.slice(0, 2000),
+    });
+  }
+  return chunks;
+}
+
+// ── Report chunks ───────────────────────────────────────────
+function buildReportChunks(KB, itemLookup) {
+  const chunks = [];
+  if (!KB.definitions) return chunks;
+  for (const [itemId, defParts] of Object.entries(KB.definitions)) {
+    const info = itemLookup[itemId] || {};
+    if (info.type !== 'Report') continue;
+    if (!Array.isArray(defParts)) continue;
+    const rptName = info.name || itemId;
+    const wsName = info.workspace || '';
+    // Find semantic model link
+    let smName = '';
+    const pbirFile = defParts.find(f => f.path === 'definition.pbir');
+    if (pbirFile) {
+      try {
+        const pbir = JSON.parse(pbirFile.payload);
+        const cs = ((pbir.datasetReference || {}).byConnection || {}).connectionString || '';
+        const mCat = cs.match(/initial catalog=([^;]+)/i);
+        if (mCat) smName = mCat[1];
+      } catch { /* malformed */ }
+    }
+    // Count pages and extract field references
+    const pageFiles = defParts.filter(f => (f.path || '').match(/page\.json$/));
+    const allFields = new Set();
+    let pageCount = pageFiles.length;
+    for (const pf of pageFiles) {
+      try {
+        const content = pf.payload || '';
+        // Extract "Property": "FieldName" patterns from visual configs
+        const fieldMatches = content.match(/"(?:Column|Measure|Property)":\s*"([^"]+)"/g) || [];
+        for (const fm of fieldMatches) {
+          const m = fm.match(/":\s*"([^"]+)"/);
+          if (m) allFields.add(m[1]);
+        }
+      } catch {}
+    }
+    // If no PBIP pages, try classic report.json
+    if (pageCount === 0) {
+      const rptJson = defParts.find(f => f.path === 'report.json');
+      if (rptJson && rptJson.payload) {
+        try {
+          const rpt = JSON.parse(rptJson.payload);
+          const sections = rpt.sections || [];
+          pageCount = sections.length;
+        } catch {}
+      }
+    }
+    chunks.push({
+      type: 'report_overview', id: rptName,
+      report_name: rptName, report_id: itemId, workspace: wsName,
+      semantic_model_name: smName,
+      page_count: pageCount,
+      fields_used: [...allFields].sort().slice(0, 200),
+      summary: `Report ${rptName}: ${pageCount} pages, linked to SM ${smName || '(unknown)'}. Fields: ${[...allFields].slice(0, 30).join(', ')}`,
+    });
+  }
+  return chunks;
+}
+
+// ── Catalog chunks (summary per type for broad queries) ─────
+function buildCatalogChunks(allChunks) {
+  const catalogs = [];
+  const grouped = {};
+  for (const c of allChunks) {
+    if (!grouped[c.type]) grouped[c.type] = [];
+    grouped[c.type].push(c);
+  }
+  // Lakehouse tables by zone
+  const lhTables = grouped['lakehouse_table'] || [];
+  const byZone = {};
+  for (const t of lhTables) {
+    const z = t.zone || 'Unknown';
+    if (!byZone[z]) byZone[z] = [];
+    byZone[z].push(t.table_name);
+  }
+  for (const [zone, tables] of Object.entries(byZone)) {
+    catalogs.push({
+      type: 'catalog', id: `catalog::lakehouse_tables::${zone}`,
+      category: 'lakehouse_tables', zone: zone,
+      item_count: tables.length,
+      items: tables.sort(),
+      summary: `${zone} zone Lakehouse tables (${tables.length}): ${tables.sort().join(', ')}`,
+    });
+  }
+  // Warehouse objects
+  for (const wType of ['warehouse_table', 'warehouse_view', 'warehouse_sproc']) {
+    const items = grouped[wType] || [];
+    if (items.length === 0) continue;
+    catalogs.push({
+      type: 'catalog', id: `catalog::${wType}`,
+      category: wType, item_count: items.length,
+      items: items.map(i => i.id).sort(),
+      summary: `All ${wType.replace('warehouse_', 'warehouse ')}s (${items.length}): ${items.map(i => i.id).sort().join(', ')}`,
+    });
+  }
+  // Semantic models
+  const smOverviews = grouped['semantic_model_overview'] || [];
+  if (smOverviews.length > 0) {
+    catalogs.push({
+      type: 'catalog', id: 'catalog::semantic_models',
+      category: 'semantic_models', item_count: smOverviews.length,
+      items: smOverviews.map(s => s.model_name).sort(),
+      summary: `All Semantic Models (${smOverviews.length}): ${smOverviews.map(s => `${s.model_name} (${s.table_count} tables, ${s.measure_count} measures)`).join('; ')}`,
+    });
+  }
+  // Pipelines, Notebooks, Reports
+  for (const [typeKey, label] of [['pipeline_overview', 'Pipelines'], ['notebook_overview', 'Notebooks'], ['report_overview', 'Reports']]) {
+    const items = grouped[typeKey] || [];
+    if (items.length === 0) continue;
+    const nameKey = typeKey === 'pipeline_overview' ? 'pipeline' : typeKey === 'notebook_overview' ? 'notebook' : 'report_name';
+    catalogs.push({
+      type: 'catalog', id: `catalog::${typeKey}`,
+      category: label.toLowerCase(), item_count: items.length,
+      items: items.map(i => i[nameKey]).sort(),
+      summary: `All ${label} (${items.length}): ${items.map(i => i[nameKey]).sort().join(', ')}`,
+    });
+  }
+  return catalogs;
+}
+
+
 // ── Assemble JSONL ──────────────────────────────────────────
-function assembleJSONL(lineageByTable, chains, warehouseChunks) {
+function assembleJSONL(lineageByTable, chains, warehouseChunks, extraChunkArrays) {
   const lines = [];
 
   // Table lineage chunks
@@ -332,33 +801,23 @@ function assembleJSONL(lineageByTable, chains, warehouseChunks) {
     const sourceTables = [...new Set(fields.map(f => f.source_table).filter(Boolean))];
     const transformTypes = [...new Set(fields.map(f => f.transformation_type).filter(Boolean))];
 
-    // table_lineage chunk
     lines.push(JSON.stringify({
-      type: "table_lineage",
-      id: table,
-      layer: record.layer || "",
-      mode: record.mode || "",
-      source_tables: sourceTables,
-      field_count: fields.length,
+      type: "table_lineage", id: table,
+      layer: record.layer || "", mode: record.mode || "",
+      source_tables: sourceTables, field_count: fields.length,
       transformation_types: transformTypes,
       summary: `${record.layer} ${record.mode} table with ${fields.length} fields from ${sourceTables.join(", ") || "unknown"}`,
       fields: fields.map(f => f.target_field),
     }));
 
-    // field_detail chunks
     for (const f of fields) {
       lines.push(JSON.stringify({
-        type: "field_detail",
-        id: `${table}.${f.target_field}`,
-        table: table,
-        layer: record.layer || "",
-        target_field: f.target_field,
-        data_type: f.data_type || "",
-        source_table: f.source_table || "",
-        source_column: f.source_column || "",
+        type: "field_detail", id: `${table}.${f.target_field}`,
+        table: table, layer: record.layer || "",
+        target_field: f.target_field, data_type: f.data_type || "",
+        source_table: f.source_table || "", source_column: f.source_column || "",
         transformation_type: f.transformation_type || "",
-        expression: f.expression || "",
-        business_logic: f.business_logic || "",
+        expression: f.expression || "", business_logic: f.business_logic || "",
         join_key: f.join_key || null,
       }));
     }
@@ -366,9 +825,12 @@ function assembleJSONL(lineageByTable, chains, warehouseChunks) {
 
   // Execution chain chunks
   for (const c of chains) lines.push(JSON.stringify(c));
-
-  // Warehouse view/sproc chunks
+  // Warehouse view/sproc/table chunks
   for (const w of warehouseChunks) lines.push(JSON.stringify(w));
+  // All extra chunk arrays (lakehouse, bronze, SM, pipeline, notebook, report, catalog)
+  for (const arr of (extraChunkArrays || [])) {
+    for (const c of arr) lines.push(JSON.stringify(c));
+  }
 
   return lines.join("\n");
 }
@@ -609,8 +1071,44 @@ module.exports = async function (context, req) {
     const warehouseChunks = buildWarehouseLineage(KB);
     log(`Built ${warehouseChunks.length} warehouse chunks.`);
 
+    log(`[${elapsed()}s] Step 5b: Building item lookup...`);
+    const itemLookup = buildItemLookup(KB);
+    log(`Item lookup: ${Object.keys(itemLookup).length} items.`);
+
+    log(`[${elapsed()}s] Step 5c: Building lakehouse chunks...`);
+    const lakehouseChunks = buildLakehouseChunks(KB, itemLookup);
+    log(`Built ${lakehouseChunks.length} lakehouse table chunks.`);
+
+    log(`[${elapsed()}s] Step 5d: Building bronze meta chunks...`);
+    const bronzeChunks = buildBronzeMetaChunks(KB);
+    log(`Built ${bronzeChunks.length} bronze meta chunks.`);
+
+    log(`[${elapsed()}s] Step 5e: Building semantic model chunks...`);
+    const smChunks = buildSemanticModelChunks(KB, itemLookup);
+    log(`Built ${smChunks.length} semantic model chunks.`);
+
+    log(`[${elapsed()}s] Step 5f: Building pipeline chunks...`);
+    const pipelineChunks = buildPipelineChunks(KB, itemLookup);
+    log(`Built ${pipelineChunks.length} pipeline chunks.`);
+
+    log(`[${elapsed()}s] Step 5g: Building notebook chunks...`);
+    const notebookChunks = buildNotebookChunks(KB, itemLookup);
+    log(`Built ${notebookChunks.length} notebook chunks.`);
+
+    log(`[${elapsed()}s] Step 5h: Building report chunks...`);
+    const reportChunks = buildReportChunks(KB, itemLookup);
+    log(`Built ${reportChunks.length} report chunks.`);
+
+    // Collect all extra chunks for catalog generation
+    const allExtraChunks = [...lakehouseChunks, ...bronzeChunks, ...smChunks, ...pipelineChunks, ...notebookChunks, ...reportChunks];
+    log(`[${elapsed()}s] Step 5i: Building catalog chunks...`);
+    const catalogChunks = buildCatalogChunks([...warehouseChunks, ...allExtraChunks]);
+    log(`Built ${catalogChunks.length} catalog chunks.`);
+
+    const extraChunkArrays = [lakehouseChunks, bronzeChunks, smChunks, pipelineChunks, notebookChunks, reportChunks, catalogChunks];
+
     log(`[${elapsed()}s] Step 6: Assembling JSONL...`);
-    const jsonl = assembleJSONL(lineageByTable, chains, warehouseChunks);
+    const jsonl = assembleJSONL(lineageByTable, chains, warehouseChunks, extraChunkArrays);
     const lineCount = jsonl.split("\n").length;
     log(`JSONL: ${lineCount} lines, ${jsonl.length} bytes.`);
 
@@ -705,6 +1203,13 @@ module.exports = async function (context, req) {
       lineage_tables: Object.keys(lineageByTable).length,
       execution_chains: chains.length,
       warehouse_chunks: warehouseChunks.length,
+      lakehouse_chunks: lakehouseChunks.length,
+      bronze_chunks: bronzeChunks.length,
+      sm_chunks: smChunks.length,
+      pipeline_chunks: pipelineChunks.length,
+      notebook_chunks: notebookChunks.length,
+      report_chunks: reportChunks.length,
+      catalog_chunks: catalogChunks.length,
       jsonl_lines: lineCount,
       jsonl_bytes: jsonl.length,
       vectors_embedded: embeddedCount,
