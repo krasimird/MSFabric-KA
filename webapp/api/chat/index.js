@@ -13,7 +13,7 @@ const { DefaultAzureCredential } = require("@azure/identity");
 const { SecretClient } = require("@azure/keyvault-secrets");
 
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
-const MODEL = "claude-sonnet-4-20250514";
+const MODEL = "claude-sonnet-4-6";
 const DEFAULT_MAX_TOKENS = 4096;
 const MAX_ALLOWED_TOKENS = 16384;
 

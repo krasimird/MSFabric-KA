@@ -4,7 +4,7 @@
   "private": true,
   "description": "RAG-powered Q&A web app for GenDWH documentation",
   "scripts": {
-    "dev": "swa start src --api-location api",
+    "dev": "swa start src --api-location api --swa-config-location local-swa",
     "build": "echo 'No build step — static HTML'",
     "deploy": "swa deploy --env production"
   },

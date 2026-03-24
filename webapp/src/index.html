@@ -148,6 +148,19 @@
     .msg-bubble th { background: var(--teal-light); font-weight: 600; }
     .msg-label { font-size: 11px; color: var(--text-muted); margin-bottom: 4px; padding: 0 4px; }
     .user .msg-label { text-align: right; }
+    .token-info { font-size: 11px; color: var(--text-muted); margin-top: 4px; padding: 0 4px; display: flex; gap: 10px; align-items: center; }
+    .token-info span { opacity: .75; }
+    .token-info .cost { color: var(--teal); font-weight: 600; opacity: 1; }
+    .usage-section { padding: 10px 16px; border-top: 1px solid var(--border); }
+    .usage-section h3 { font-size: 12px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 6px; }
+    .usage-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    .usage-card { background: var(--teal-light); border-radius: 6px; padding: 8px; text-align: center; }
+    .usage-card .uval { font-size: 16px; font-weight: 700; color: var(--teal); }
+    .usage-card .ulbl { font-size: 10px; color: var(--text-muted); }
+    .usage-history { margin-top: 8px; font-size: 11px; color: var(--text-muted); max-height: 100px; overflow-y: auto; }
+    .usage-history table { width: 100%; border-collapse: collapse; }
+    .usage-history th, .usage-history td { padding: 2px 4px; text-align: right; border-bottom: 1px solid var(--border); }
+    .usage-history th { text-align: left; font-weight: 600; }
     .welcome { text-align: center; color: var(--text-muted); margin: auto; max-width: 500px; }
     .welcome h2 { color: var(--teal); margin-bottom: 8px; }
 
@@ -174,6 +187,31 @@
     }
     .send-btn:hover { background: var(--teal-dark); }
     .send-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+    /* ── Sticky Context Bar ──────────────────────────────────── */
+    .sticky-context-bar {
+      display: none; /* shown via JS when entities pinned */
+      padding: 6px 20px; border-top: 1px solid var(--border); background: var(--surface);
+      gap: 6px; align-items: center; flex-wrap: wrap; flex-shrink: 0;
+    }
+    .sticky-context-bar.has-items { display: flex; }
+    .sticky-context-pill {
+      display: inline-flex; align-items: center; gap: 4px;
+      background: var(--teal); color: #fff; border-radius: 14px;
+      padding: 3px 10px 3px 10px; font-size: 12px; font-weight: 500;
+      max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .sticky-context-pill .pill-icon { opacity: .8; font-size: 11px; }
+    .sticky-context-pill .pill-close {
+      cursor: pointer; margin-left: 4px; opacity: .7; font-size: 14px; line-height: 1;
+    }
+    .sticky-context-pill .pill-close:hover { opacity: 1; }
+    .sticky-context-clear {
+      background: none; border: 1px solid var(--border); border-radius: 14px;
+      padding: 3px 10px; font-size: 11px; color: var(--text-muted); cursor: pointer;
+      transition: border-color .15s, color .15s;
+    }
+    .sticky-context-clear:hover { border-color: var(--teal); color: var(--text); }
 
     /* ── Pipeline Vis.js Graph ────────────────────────────────── */
     .pipeline-graph-wrap {
@@ -240,6 +278,16 @@
       <h3>🧠 AI Analysis</h3>
       <div class="progress-bar"><div class="progress-fill" id="analysisProgress"></div></div>
       <div class="analysis-status" id="analysisStatus">Ready</div>
+    </div>
+    <div class="usage-section" id="usageSection">
+      <h3>💰 API Usage (Today)</h3>
+      <div class="usage-grid">
+        <div class="usage-card"><div class="uval" id="uQueries">0</div><div class="ulbl">Queries</div></div>
+        <div class="usage-card"><div class="uval" id="uCost">$0.00</div><div class="ulbl">Cost</div></div>
+        <div class="usage-card"><div class="uval" id="uInput">0</div><div class="ulbl">Input tokens</div></div>
+        <div class="usage-card"><div class="uval" id="uOutput">0</div><div class="ulbl">Output tokens</div></div>
+      </div>
+      <div class="usage-history" id="usageHistory"></div>
     </div>
     <button class="prompts-drawer-btn" id="promptsDrawerBtn">📋 Примерни промптове →</button>
     <div class="data-status" id="dataStatus"><span class="dot dot-loading"></span> Loading data…</div>
@@ -327,6 +375,7 @@
       </div>
     </div>
 
+    <div class="sticky-context-bar" id="stickyContextBar"></div>
     <div class="input-area">
       <textarea id="userInput" placeholder="Ask about your data warehouse… (Enter to send, Shift+Enter for new line)" rows="1"></textarea>
       <button class="send-btn" id="sendBtn">Send</button>
@@ -356,12 +405,71 @@ let aiAnalysis = null;
 let analysisReady = false; // true when JSONL knowledge or IndexedDB has lineage data
 let PIPELINE_INDEX = {};  // pipeline name/activity name → pipeline item name (built on load)
 
+// ── Sticky Context ────────────────────────────────────────────
+const MAX_STICKY = 3;
+let stickyEntities = []; // [{name, type, text}] — max 3
+
+// ── Token Usage Tracking ─────────────────────────────────────
+const PRICE_INPUT  = 3  / 1_000_000;  // $3 per 1M input tokens
+const PRICE_OUTPUT = 15 / 1_000_000;  // $15 per 1M output tokens
+const USAGE_STORAGE_KEY = 'ka_usage_daily';
+
+function getTodayKey() { return new Date().toISOString().slice(0, 10); }
+
+function loadUsageData() {
+  try { return JSON.parse(localStorage.getItem(USAGE_STORAGE_KEY) || '{}'); } catch { return {}; }
+}
+
+function recordUsage(inputTokens, outputTokens) {
+  const data = loadUsageData();
+  const key = getTodayKey();
+  if (!data[key]) data[key] = { queries: 0, input: 0, output: 0, cost: 0 };
+  const cost = inputTokens * PRICE_INPUT + outputTokens * PRICE_OUTPUT;
+  data[key].queries += 1;
+  data[key].input += inputTokens;
+  data[key].output += outputTokens;
+  data[key].cost += cost;
+  // Keep last 30 days only
+  const keys = Object.keys(data).sort();
+  while (keys.length > 30) { delete data[keys.shift()]; }
+  localStorage.setItem(USAGE_STORAGE_KEY, JSON.stringify(data));
+  updateUsageSummary();
+  return { inputTokens, outputTokens, cost };
+}
+
+function formatTokens(n) {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
+  return String(n);
+}
+
+function updateUsageSummary() {
+  const data = loadUsageData();
+  const today = data[getTodayKey()] || { queries: 0, input: 0, output: 0, cost: 0 };
+  document.getElementById('uQueries').textContent = today.queries;
+  document.getElementById('uCost').textContent = '$' + today.cost.toFixed(2);
+  document.getElementById('uInput').textContent = formatTokens(today.input);
+  document.getElementById('uOutput').textContent = formatTokens(today.output);
+  // History table (last 7 days)
+  const keys = Object.keys(data).sort().reverse().slice(0, 7);
+  if (keys.length > 0) {
+    let html = '<table><tr><th>Date</th><th>Q</th><th>Cost</th></tr>';
+    for (const k of keys) {
+      const d = data[k];
+      html += `<tr><td style="text-align:left">${k.slice(5)}</td><td>${d.queries}</td><td>$${d.cost.toFixed(2)}</td></tr>`;
+    }
+    html += '</table>';
+    document.getElementById('usageHistory').innerHTML = html;
+  }
+}
+
 // ── DOM refs ───────────────────────────────────────────────────
 const chatArea  = document.getElementById('chatArea');
 const userInput = document.getElementById('userInput');
 const sendBtn   = document.getElementById('sendBtn');
 const sidebar   = document.getElementById('sidebar');
 const menuToggle= document.getElementById('menuToggle');
+const stickyBar = document.getElementById('stickyContextBar');
 
 // ── Data loading ───────────────────────────────────────────────
 async function loadData() {
@@ -392,6 +500,7 @@ async function loadData() {
         buildPipelineIndex();
         buildReportChunksClientSide();
         buildSemanticModelChunks();
+        buildCrossReferences();
         progressBar.style.width = '100%';
         analysisStatus.textContent = `✅ Knowledge base loaded — ${KNOWLEDGE.length} chunks`;
         console.log(`Loaded ${KNOWLEDGE.length} JSONL chunks from Blob.`);
@@ -509,6 +618,7 @@ async function startAnalysis() {
     buildPipelineIndex();
     buildReportChunksClientSide();
     buildSemanticModelChunks();
+    buildCrossReferences();
     progress.style.width = '100%';
     status.textContent = `✅ Done in ${pass} pass(es) — ${totalAnalyzed} analyzed, ${totalCached} cached, ${totalFailed} failed. ${KNOWLEDGE.length} chunks.`;
     btn.textContent = '🔄 Re-analyze knowledge base';
@@ -571,6 +681,7 @@ function buildPipelineIndex() {
 }
 
 // ── Client-side report chunk generation ──────────────────────
+// ── Client-side report chunk generation (v2 — supports report.json + PBIP) ──
 function buildReportChunksClientSide() {
   if (!KB || !KB.workspaces || !KB.definitions) return;
 
@@ -585,9 +696,8 @@ function buildReportChunksClientSide() {
 
       const rptName = item.displayName || item.name || 'Unknown';
       const wsName = ws.displayName || ws.name || '';
-      reportCount++;
 
-      // Parse definition.pbir → semantic model
+      // Parse definition.pbir → semantic model link
       const pbirFile = defParts.find(f => f.path === 'definition.pbir');
       let smId = '', smName = '';
       if (pbirFile) {
@@ -601,49 +711,59 @@ function buildReportChunksClientSide() {
         } catch { /* malformed */ }
       }
 
-      // Parse report.json → pages, visuals, fields
-      const rjFile = defParts.find(f => f.path === 'report.json');
-      if (!rjFile) continue;
-      let rjson;
-      try { rjson = JSON.parse(rjFile.payload); } catch { continue; }
+      // Detect format: PBIP (definition/pages/) vs classic (report.json)
+      const isPBIP = defParts.some(f => (f.path || '').match(/^definition\/pages\/.*page\.json$/));
+      let pages; // [{pageName, visuals:[{type, fields:Set, filters:[]}], pageFilters:[]}]
 
-      const sections = rjson.sections || [];
+      if (isPBIP) {
+        pages = _parsePBIPReport(defParts);
+      } else {
+        pages = _parseClassicReport(defParts);
+      }
+
+      if (!pages || pages.length === 0) continue;
+      reportCount++;
+
       const allFields = new Set(), allTables = new Set();
       let totalVisuals = 0;
 
-      for (const sec of sections) {
-        const pageName = sec.displayName || sec.name || 'Untitled';
-        const vcs = sec.visualContainers || [];
-        totalVisuals += vcs.length;
+      for (const page of pages) {
+        totalVisuals += page.visuals.length;
         const pageFields = new Set();
         const visualTypes = {};
+        const visualDetails = [];
 
-        for (const vc of vcs) {
-          let cfg = {};
-          try { cfg = JSON.parse(vc.config || '{}'); } catch { continue; }
-          const sv = cfg.singleVisual || {};
-          const vt = sv.visualType || 'unknown';
-          visualTypes[vt] = (visualTypes[vt] || 0) + 1;
-          // Extract field refs from prototypeQuery
-          const sourceMap = {};
-          _extractFieldRefs(sv.prototypeQuery || {}, sourceMap, pageFields);
+        for (const vis of page.visuals) {
+          visualTypes[vis.type] = (visualTypes[vis.type] || 0) + 1;
+          for (const f of vis.fields) pageFields.add(f);
+          // Collect per-visual detail for richer chunks
+          if (vis.fields.size > 0) {
+            visualDetails.push({
+              type: vis.type,
+              fields: [...vis.fields].sort(),
+              filter_count: (vis.filters || []).length,
+            });
+          }
         }
 
         for (const f of pageFields) { allFields.add(f); allTables.add(f.split('.')[0]); }
         const pageTables = [...new Set([...pageFields].map(f => f.split('.')[0]))];
 
         KNOWLEDGE.push({
-          type: 'report_page', id: `${rptName}::${pageName}`,
+          type: 'report_page', id: `${rptName}::${page.pageName}`,
           report_name: rptName, report_id: item.id, workspace: wsName,
-          page_name: pageName, visual_count: vcs.length, visual_types: visualTypes,
+          semantic_model_name: smName, semantic_model_id: smId,
+          page_name: page.pageName, visual_count: page.visuals.length,
+          visual_types: visualTypes, visuals: visualDetails,
           tables_used: pageTables, fields_used: [...pageFields].sort(),
+          page_filter_count: (page.pageFilters || []).length,
         });
         chunkCount++;
 
         for (const fld of pageFields) {
           const tbl = fld.split('.')[0];
           if (!impactIndex[tbl]) impactIndex[tbl] = [];
-          impactIndex[tbl].push({ report_name: rptName, page_name: pageName, field: fld });
+          impactIndex[tbl].push({ report_name: rptName, page_name: page.pageName, field: fld });
         }
       }
 
@@ -651,7 +771,7 @@ function buildReportChunksClientSide() {
         type: 'report_overview', id: rptName,
         report_name: rptName, report_id: item.id, workspace: wsName,
         semantic_model_id: smId, semantic_model_name: smName,
-        page_count: sections.length, total_visuals: totalVisuals,
+        page_count: pages.length, total_visuals: totalVisuals,
         unique_tables: [...allTables].sort(), unique_fields: [...allFields].sort(),
       });
       chunkCount++;
@@ -677,6 +797,117 @@ function buildReportChunksClientSide() {
   console.log(`[REPORT_CHUNKS] Built ${chunkCount} report chunks from ${reportCount} reports`);
 }
 
+// ── Classic report.json parser ──
+function _parseClassicReport(defParts) {
+  const rjFile = defParts.find(f => f.path === 'report.json');
+  if (!rjFile) return null;
+  let rjson;
+  try { rjson = JSON.parse(rjFile.payload); } catch { return null; }
+
+  const pages = [];
+  for (const sec of (rjson.sections || [])) {
+    const pageName = sec.displayName || sec.name || 'Untitled';
+    const pageFilters = _parseFilterArray(sec.filters);
+    const visuals = [];
+
+    for (const vc of (sec.visualContainers || [])) {
+      let cfg = {};
+      try { cfg = JSON.parse(vc.config || '{}'); } catch { continue; }
+      const sv = cfg.singleVisual || {};
+      if (!sv.visualType) continue; // skip visual groups
+      const vt = sv.visualType;
+      const fields = new Set();
+      const sourceMap = {};
+      _extractFieldRefs(sv.prototypeQuery || {}, sourceMap, fields);
+      const filters = _parseFilterArray(vc.filters);
+      visuals.push({ type: vt, fields, filters });
+    }
+    pages.push({ pageName, visuals, pageFilters });
+  }
+  return pages;
+}
+
+// ── PBIP format parser (definition/pages/*/page.json + visuals/*/visual.json) ──
+function _parsePBIPReport(defParts) {
+  // Find pages.json for page ordering (optional)
+  const pageFiles = defParts.filter(f => (f.path || '').match(/^definition\/pages\/[^/]+\/page\.json$/));
+  const pages = [];
+
+  for (const pf of pageFiles) {
+    let pjson;
+    try { pjson = JSON.parse(pf.payload); } catch { continue; }
+    const pageName = pjson.displayName || pjson.name || 'Untitled';
+    const pageFilters = _parsePBIPFilters(pjson.filterConfig);
+
+    // Find visuals for this page (same directory prefix)
+    const pageDir = pf.path.replace(/page\.json$/, '');
+    const vizFiles = defParts.filter(f => (f.path || '').startsWith(pageDir + 'visuals/') && (f.path || '').endsWith('/visual.json'));
+    const visuals = [];
+
+    for (const vf of vizFiles) {
+      let vjson;
+      try { vjson = JSON.parse(vf.payload); } catch { continue; }
+      const vis = vjson.visual || {};
+      const vt = vis.visualType || 'unknown';
+      if (['shape', 'image', 'textbox', 'actionButton'].includes(vt)) continue;
+
+      const fields = new Set();
+      // PBIP uses visual.query.queryState.{bucket}.projections[].field
+      _extractPBIPFields(vis.query, fields);
+      const filters = _parsePBIPFilters(vjson.filterConfig);
+      visuals.push({ type: vt, fields, filters });
+    }
+    pages.push({ pageName, visuals, pageFilters });
+  }
+  return pages;
+}
+
+// Extract field refs from PBIP visual.query.queryState
+function _extractPBIPFields(query, out) {
+  if (!query || !query.queryState) return;
+  for (const bucket of Object.values(query.queryState)) {
+    if (!bucket || !Array.isArray(bucket.projections)) continue;
+    for (const proj of bucket.projections) {
+      const field = proj.field || {};
+      // Column ref: field.Column.Expression.SourceRef.Entity + field.Column.Property
+      const col = field.Column || field.Measure;
+      if (col && col.Expression && col.Expression.SourceRef && col.Property) {
+        const entity = col.Expression.SourceRef.Entity || '';
+        if (entity) out.add(`${entity}.${col.Property}`);
+      }
+    }
+  }
+}
+
+// Parse filter arrays from classic format (JSON string or array)
+function _parseFilterArray(filters) {
+  if (!filters) return [];
+  let arr = filters;
+  if (typeof filters === 'string') {
+    try { arr = JSON.parse(filters); } catch { return []; }
+  }
+  if (!Array.isArray(arr)) return [];
+  return arr.map(f => {
+    const expr = f.expression || f.field || {};
+    const col = expr.Column || expr.Measure || {};
+    const entity = (col.Expression?.SourceRef?.Entity) || '';
+    const prop = col.Property || '';
+    return { field: entity && prop ? `${entity}.${prop}` : '', type: f.type || '' };
+  }).filter(f => f.field);
+}
+
+// Parse PBIP filterConfig
+function _parsePBIPFilters(filterConfig) {
+  if (!filterConfig || !filterConfig.filters) return [];
+  return filterConfig.filters.map(f => {
+    const field = f.field || {};
+    const col = field.Column || field.Measure || {};
+    const entity = (col.Expression?.SourceRef?.Entity) || '';
+    const prop = col.Property || '';
+    return { field: entity && prop ? `${entity}.${prop}` : '', type: f.type || '' };
+  }).filter(f => f.field);
+}
+
 // Helper: recursively extract table.column refs from Power BI prototypeQuery AST
 function _extractFieldRefs(node, sourceMap, out) {
   if (!node || typeof node !== 'object') return;
@@ -693,7 +924,15 @@ function _extractFieldRefs(node, sourceMap, out) {
   for (const v of Object.values(node)) _extractFieldRefs(v, sourceMap, out);
 }
 
-// ── Client-side semantic model chunk generation ──────────────
+function _formatSemanticModelMeasureBlock(measure) {
+  let s = `measure ${measure.name} = ${measure.expression}`;
+  if (measure.formatString) s += `\n  formatString: ${measure.formatString}`;
+  if (measure.description) s += `\n  description: ${measure.description}`;
+  if (measure.displayFolder) s += `\n  displayFolder: ${measure.displayFolder}`;
+  return s;
+}
+
+// ── Client-side semantic model chunk generation (v2 — full TMDL extraction) ──
 function buildSemanticModelChunks() {
   if (!KB || !KB.workspaces || !KB.definitions) return;
   let modelCount = 0, chunkCount = 0;
@@ -708,163 +947,210 @@ function buildSemanticModelChunks() {
       const wsName = ws.displayName || ws.name || '';
       modelCount++;
 
-      // Collect tables, measures, relationships from TMDL files
-      const tables = [];
-      const measuresPerTable = {};  // tableName → [{name, expression}]
+      // ── Parse all TMDL files ──
+      const tablesMap = {};   // tableName → { columns:[], measures:[], hierarchies:[], isCalculated, description, mode, ... }
       let relationships = [];
+      let perspectives = [];  // [{name, tables:[{table, measures:[], columns:[], hierarchies:[]}]}]
 
       for (const part of defParts) {
         const p = part.path || '';
         const payload = part.payload || '';
 
-        // Parse table TMDL files
+        // ── Parse table TMDL files ──
         if (p.startsWith('definition/tables/') && p.endsWith('.tmdl')) {
-          const tblMatch = payload.match(/^table\s+(.+)/m);
-          if (!tblMatch) continue;
-          const tblName = tblMatch[1].replace(/^['"]|['"]$/g, '').trim();
-          tables.push(tblName);
-
-          // Extract measures using line-by-line scanner (handles ``` blocks and varied indentation)
-          const lines = payload.split('\n');
-          let curMeasure = null; // { name, exprLines }
-          let inBacktickBlock = false;
-
-          const flushMeasure = () => {
-            if (curMeasure) {
-              const expr = curMeasure.exprLines.join('\n').replace(/```/g, '').trim();
-              if (!measuresPerTable[tblName]) measuresPerTable[tblName] = [];
-              measuresPerTable[tblName].push({ name: curMeasure.name, expression: expr });
-            }
-            curMeasure = null;
-            inBacktickBlock = false;
-          };
-
-          for (let li = 0; li < lines.length; li++) {
-            const line = lines[li];
-            const trimmed = line.trimStart();
-
-            // Detect measure start: line starts with "measure " (after optional whitespace)
-            if (/^measure\s+/i.test(trimmed)) {
-              flushMeasure(); // flush previous measure if any
-              // Extract name: measure 'Name' = ... OR measure Name = ...
-              const mMatch = trimmed.match(/^measure\s+(?:'([^']+)'|"([^"]+)"|(\S+?))\s*=/i);
-              if (!mMatch) continue;
-              const mName = (mMatch[1] || mMatch[2] || mMatch[3] || '').trim();
-              // Expression starts after the "= " on this line
-              const eqIdx = trimmed.indexOf('=');
-              const afterEq = eqIdx >= 0 ? trimmed.slice(eqIdx + 1).trim() : '';
-              curMeasure = { name: mName, exprLines: [] };
-              if (afterEq.startsWith('```')) {
-                inBacktickBlock = true;
-                curMeasure.exprLines.push(afterEq);
-              } else if (afterEq) {
-                curMeasure.exprLines.push(afterEq);
-              }
-              continue;
-            }
-
-            // If inside a measure, accumulate expression lines
-            if (curMeasure) {
-              // Stop accumulating on: column, hierarchy, partition, annotation, or another top-level keyword at same/lower indent
-              if (/^(column|hierarchy|partition|table)\s+/i.test(trimmed)) {
-                flushMeasure();
-                continue;
-              }
-              // lineageTag / formatString / changedProperty / annotation => end of expression
-              if (/^(lineageTag|formatString|changedProperty|annotation)\s*/i.test(trimmed)) {
-                if (inBacktickBlock) {
-                  // Keep going — we haven't closed the ``` block yet
-                  // But check if this line closes it
-                  if (trimmed.includes('```')) { inBacktickBlock = false; curMeasure.exprLines.push(line); }
-                  continue;
-                }
-                flushMeasure();
-                continue;
-              }
-              // Track ``` block boundaries
-              if (trimmed.includes('```')) {
-                curMeasure.exprLines.push(line);
-                inBacktickBlock = !inBacktickBlock;
-                continue;
-              }
-              // Accumulate indented continuation lines
-              if (inBacktickBlock || /^\t/.test(line) || /^\s{2,}/.test(line)) {
-                curMeasure.exprLines.push(line);
-              } else if (trimmed === '') {
-                // blank line — keep if inside backtick block, otherwise flush
-                if (inBacktickBlock) curMeasure.exprLines.push(line);
-                else flushMeasure();
-              } else {
-                flushMeasure();
-              }
-            }
-          }
-          flushMeasure(); // flush last measure
+          const parsed = _parseTmdlTable(payload);
+          if (!parsed) continue;
+          // Skip auto-generated date tables
+          if (parsed.name.startsWith('LocalDateTable') || parsed.name.startsWith('DateTableTemplate')) continue;
+          tablesMap[parsed.name] = parsed;
         }
 
-        // Parse relationships.tmdl
-        if (p === 'definition/relationships.tmdl') {
-          const relBlocks = payload.split(/\n\trelationship\s+/);
-          for (let i = 1; i < relBlocks.length; i++) {
-            const rb = relBlocks[i];
-            const fromTbl = rb.match(/fromTable:\s*(.+)/);
-            const fromCol = rb.match(/fromColumn:\s*(.+)/);
-            const toTbl = rb.match(/toTable:\s*(.+)/);
-            const toCol = rb.match(/toColumn:\s*(.+)/);
-            const card = rb.match(/crossFilteringBehavior:\s*(.+)/);
-            if (fromTbl && toTbl) {
-              relationships.push({
-                from_table: fromTbl[1].trim().replace(/^['"]|['"]$/g, ''),
-                from_column: (fromCol ? fromCol[1].trim() : '').replace(/^['"]|['"]$/g, ''),
-                to_table: toTbl[1].trim().replace(/^['"]|['"]$/g, ''),
-                to_column: (toCol ? toCol[1].trim() : '').replace(/^['"]|['"]$/g, ''),
-                cardinality: card ? card[1].trim() : 'manyToOne',
-              });
-            }
-          }
+        // ── Parse relationships.tmdl ──
+        if (p.endsWith('relationships.tmdl')) {
+          relationships = _parseTmdlRelationships(payload);
+        }
+
+        // ── Parse perspectives ──
+        if (p.startsWith('definition/perspectives/') && p.endsWith('.tmdl')) {
+          const persp = _parseTmdlPerspective(payload);
+          if (persp) perspectives.push(persp);
         }
       }
 
-      const allMeasures = Object.values(measuresPerTable).flat();
+      const tableNames = Object.keys(tablesMap);
+      const allMeasures = [];
+      const measuresPerTable = {};
+      for (const [tbl, info] of Object.entries(tablesMap)) {
+        if (info.measures.length > 0) {
+          measuresPerTable[tbl] = info.measures;
+          allMeasures.push(...info.measures);
+        }
+      }
 
       // Per-model debug logging
-      console.log(`[SM] ${modelName}: ${tables.length} tables, ${allMeasures.length} measures, ${relationships.length} rels`);
-      for (const [tbl, ms] of Object.entries(measuresPerTable)) {
-        console.log(`  └─ ${tbl}: ${ms.length} measures → ${ms.map(m => m.name).join(', ')}`);
-      }
+      const totalCols = Object.values(tablesMap).reduce((s, t) => s + t.columns.length, 0);
+      const totalHierarchies = Object.values(tablesMap).reduce((s, t) => s + (t.hierarchies || []).length, 0);
+      const calcCols = Object.values(tablesMap).reduce((s, t) => s + t.columns.filter(c => c.isCalculatedColumn).length, 0);
+      console.log(`[SM] ${modelName}: ${tableNames.length} tables, ${totalCols} cols (${calcCols} calc), ${allMeasures.length} measures, ${relationships.length} rels, ${totalHierarchies} hierarchies, ${perspectives.length} perspectives`);
 
-      // ── semantic_model_overview chunk ──
-      const overviewText = `Semantic Model: ${modelName}\nWorkspace: ${wsName}\nTables (${tables.length}): ${tables.join(', ')}\nMeasures: ${allMeasures.length}\nRelationships: ${relationships.length}`;
+      // ── semantic_model_overview chunk (enriched) ──
+      const tablesSummary = tableNames.map(t => {
+        const info = tablesMap[t];
+        const colCount = info.columns.length;
+        const measCount = info.measures.length;
+        const hierCount = (info.hierarchies || []).length;
+        const calcCount = info.columns.filter(c => c.isCalculatedColumn).length;
+        let desc = `${t} (${colCount} cols`;
+        if (calcCount > 0) desc += `, ${calcCount} calculated`;
+        if (measCount > 0) desc += `, ${measCount} measures`;
+        if (hierCount > 0) desc += `, ${hierCount} hierarchies`;
+        if (info.isCalculated) desc += ', calc-table';
+        if (info.mode) desc += `, ${info.mode}`;
+        if (info.description) desc += ` — ${info.description}`;
+        desc += ')';
+        return desc;
+      });
+      const overviewTextParts = [
+        `Semantic Model: ${modelName}`,
+        `Workspace: ${wsName}`,
+        `Tables (${tableNames.length}): ${tablesSummary.join('; ')}`,
+        `Total columns: ${totalCols}` + (calcCols > 0 ? ` (${calcCols} calculated)` : ''),
+        `Total measures: ${allMeasures.length}`,
+        `Relationships: ${relationships.length}`,
+      ];
+      if (totalHierarchies > 0) overviewTextParts.push(`Hierarchies: ${totalHierarchies}`);
+      if (perspectives.length > 0) overviewTextParts.push(`Perspectives (${perspectives.length}): ${perspectives.map(p => p.name).join(', ')}`);
+      const overviewText = overviewTextParts.join('\n');
+
       KNOWLEDGE.push({
         type: 'semantic_model_overview', id: modelName,
         model_name: modelName, model_id: item.id, workspace: wsName,
-        table_count: tables.length, measure_count: allMeasures.length,
-        relationship_count: relationships.length,
-        tables: tables,
+        table_count: tableNames.length, measure_count: allMeasures.length,
+        column_count: totalCols, relationship_count: relationships.length,
+        hierarchy_count: totalHierarchies, perspective_count: perspectives.length,
+        calculated_column_count: calcCols,
+        tables: tableNames,
+        tables_detail: Object.fromEntries(Object.entries(tablesMap).map(([k, v]) => [k, {
+          columns: v.columns, measure_count: v.measures.length, isCalculated: v.isCalculated,
+          hierarchies: v.hierarchies || [], description: v.description || '', mode: v.mode || '',
+        }])),
+        perspectives: perspectives.length > 0 ? perspectives : undefined,
         text: overviewText,
       });
       chunkCount++;
 
-      // ── semantic_model_measures chunks (one per table with measures) ──
+      // ── semantic_model_measures chunks (split large tables into parts) ──
       for (const [tblName, measures] of Object.entries(measuresPerTable)) {
-        const measText = measures.map(m => `measure ${m.name} = ${m.expression}`).join('\n');
+        const MAX_MEASURE_CHUNK_CHARS = 3500;
+        const prefix = `Semantic Model: ${modelName}\nTable: ${tblName}\n`;
+        const parts = []; // each part: { measures:[], text:'' }
+        let curMeasures = [], curBlocks = [], curLen = prefix.length;
+
+        const flush = () => {
+          if (curMeasures.length === 0) return;
+          parts.push({
+            measures: curMeasures,
+            text: prefix + curBlocks.join('\n\n'),
+          });
+          curMeasures = []; curBlocks = []; curLen = prefix.length;
+        };
+
+        for (const m of measures) {
+          const block = _formatSemanticModelMeasureBlock(m);
+          const extra = (curBlocks.length > 0 ? 2 : 0) + block.length;
+          if (curBlocks.length > 0 && curLen + extra > MAX_MEASURE_CHUNK_CHARS) flush();
+          curMeasures.push(m);
+          curBlocks.push(block);
+          curLen += (curBlocks.length > 1 ? 2 : 0) + block.length;
+        }
+        flush();
+
+        for (let pi = 0; pi < parts.length; pi++) {
+          const partId = parts.length > 1 ? `${modelName}::${tblName}::part${pi + 1}` : `${modelName}::${tblName}`;
+          KNOWLEDGE.push({
+            type: 'semantic_model_measures', id: partId,
+            model_name: modelName, model_id: item.id, table_name: tblName,
+            measures: parts[pi].measures,
+            text: parts[pi].text,
+            part_no: pi + 1, part_count: parts.length,
+          });
+          chunkCount++;
+        }
+      }
+
+      // ── semantic_model_table chunks (per-table detail with columns + hierarchies) ──
+      for (const [tblName, info] of Object.entries(tablesMap)) {
+        if (info.columns.length === 0 && (info.hierarchies || []).length === 0) continue;
+        const colLines = info.columns.map(c => {
+          let s = `  ${c.name}: ${c.dataType || '?'}`;
+          if (c.isCalculatedColumn) s += ' [CALCULATED]';
+          if (c.isHidden) s += ' [hidden]';
+          if (c.formatString) s += ` fmt=${c.formatString}`;
+          if (c.sortByColumn) s += ` sortBy=${c.sortByColumn}`;
+          if (c.description) s += ` — ${c.description}`;
+          if (c.displayFolder) s += ` folder=${c.displayFolder}`;
+          return s;
+        });
+        const hierLines = (info.hierarchies || []).map(h => {
+          const levels = h.levels.map(l => `${l.name}(${l.column})`).join(' → ');
+          return `  hierarchy ${h.name}: ${levels}`;
+        });
+        const textParts = [`Semantic Model: ${modelName}`, `Table: ${tblName}`];
+        if (info.description) textParts.push(`Description: ${info.description}`);
+        if (info.mode) textParts.push(`Mode: ${info.mode}`);
+        if (info.isCalculated) textParts.push('Type: Calculated table');
+        if (info.sourceLineageTag) textParts.push(`Source: ${info.sourceLineageTag}`);
+        textParts.push(`Columns (${info.columns.length}):`);
+        textParts.push(...colLines);
+        if (hierLines.length > 0) {
+          textParts.push(`Hierarchies (${hierLines.length}):`);
+          textParts.push(...hierLines);
+        }
         KNOWLEDGE.push({
-          type: 'semantic_model_measures', id: `${modelName}::${tblName}`,
+          type: 'semantic_model_table', id: `${modelName}::${tblName}`,
           model_name: modelName, model_id: item.id, table_name: tblName,
-          measures: measures,
-          text: `Semantic Model: ${modelName}\nTable: ${tblName}\n${measText}`,
+          columns: info.columns, hierarchies: info.hierarchies || [],
+          description: info.description || '', mode: info.mode || '',
+          isCalculated: info.isCalculated, sourceLineageTag: info.sourceLineageTag || '',
+          text: textParts.join('\n'),
         });
         chunkCount++;
       }
 
       // ── semantic_model_relationships chunk ──
       if (relationships.length > 0) {
-        const relText = relationships.map(r => `${r.from_table}.${r.from_column} → ${r.to_table}.${r.to_column} (${r.cardinality})`).join('\n');
+        const relText = relationships.map(r => {
+          let s = `${r.from_table}.${r.from_column} → ${r.to_table}.${r.to_column}`;
+          if (r.crossFilteringBehavior && r.crossFilteringBehavior !== 'oneDirection') s += ` [${r.crossFilteringBehavior}]`;
+          if (!r.isActive) s += ' [INACTIVE]';
+          return s;
+        }).join('\n');
         KNOWLEDGE.push({
           type: 'semantic_model_relationships', id: `${modelName}::relationships`,
           model_name: modelName, model_id: item.id,
           relationships: relationships,
           text: `Semantic Model: ${modelName}\nRelationships:\n${relText}`,
+        });
+        chunkCount++;
+      }
+
+      // ── semantic_model_perspectives chunk ──
+      if (perspectives.length > 0) {
+        const perspText = perspectives.map(p => {
+          const tblSummaries = p.tables.map(t => {
+            const parts = [t.table];
+            if (t.measures.length) parts.push(`measures: ${t.measures.join(', ')}`);
+            if (t.columns.length) parts.push(`columns: ${t.columns.join(', ')}`);
+            if (t.hierarchies.length) parts.push(`hierarchies: ${t.hierarchies.join(', ')}`);
+            return `  ${parts.join(' | ')}`;
+          });
+          return `Perspective: ${p.name}\n${tblSummaries.join('\n')}`;
+        }).join('\n\n');
+        KNOWLEDGE.push({
+          type: 'semantic_model_perspectives', id: `${modelName}::perspectives`,
+          model_name: modelName, model_id: item.id,
+          perspectives: perspectives,
+          text: `Semantic Model: ${modelName}\n${perspText}`,
         });
         chunkCount++;
       }
@@ -876,13 +1162,488 @@ function buildSemanticModelChunks() {
   console.log(`[SM_CHUNKS] Models: ${modelNames.join(', ')}`);
 }
 
+// ── Cross-reference pass: links SM ↔ Report chunks ──
+function buildCrossReferences() {
+  const smOverviews = KNOWLEDGE.filter(c => c.type === 'semantic_model_overview');
+  const smMeasures  = KNOWLEDGE.filter(c => c.type === 'semantic_model_measures');
+  const rptOverviews = KNOWLEDGE.filter(c => c.type === 'report_overview');
+  const rptPages     = KNOWLEDGE.filter(c => c.type === 'report_page');
+
+  if (smOverviews.length === 0 || (rptOverviews.length === 0 && rptPages.length === 0)) {
+    console.log('[XREF] No cross-references to build (missing SM or Report chunks)');
+    return;
+  }
+
+  // 1. Build flat measure name → model_name map for field matching
+  const measureNameToModel = {};
+  for (const mc of smMeasures) {
+    for (const m of (mc.measures || [])) {
+      const key = `${(mc.table_name||'').toLowerCase()}.${(m.name||'').toLowerCase()}`;
+      measureNameToModel[key] = mc.model_name;
+    }
+  }
+
+  // 3. Enrich SM overview chunks with used_in_reports
+  for (const sm of smOverviews) {
+    const matchedReports = rptOverviews.filter(r =>
+      (r.semantic_model_name && r.semantic_model_name.toLowerCase() === (sm.model_name || '').toLowerCase()) ||
+      (r.semantic_model_id && r.semantic_model_id === sm.model_id)
+    );
+    if (matchedReports.length > 0) {
+      sm.used_in_reports = matchedReports.map(r => r.report_name);
+      sm.text += `\nUsed in reports (${matchedReports.length}): ${sm.used_in_reports.join(', ')}`;
+    }
+  }
+
+  // 4. Enrich SM measures chunks with used_in_report_pages + used_in_visuals
+  for (const mc of smMeasures) {
+    const measureNames = (mc.measures || []).map(m => (m.name || '').toLowerCase());
+    const tableName = (mc.table_name || '').toLowerCase();
+    const matchedPages = [];
+    const matchedVisuals = []; // {report, page, visual_type, measure}
+
+    for (const pg of rptPages) {
+      // Match at page level (fields_used)
+      const pgFields = (pg.fields_used || []).map(f => f.toLowerCase());
+      const hitMeasures = [];
+      for (const f of pgFields) {
+        const dotIdx = f.indexOf('.');
+        if (dotIdx < 0) continue;
+        const entity = f.slice(0, dotIdx);
+        const prop = f.slice(dotIdx + 1);
+        if (entity === tableName && measureNames.includes(prop)) hitMeasures.push(prop);
+      }
+      if (hitMeasures.length > 0) {
+        matchedPages.push({ report: pg.report_name, page: pg.page_name });
+      }
+
+      // Match at visual level (visuals[].fields)
+      for (const vis of (pg.visuals || [])) {
+        const vFields = (vis.fields || []).map(f => f.toLowerCase());
+        for (const f of vFields) {
+          const dotIdx = f.indexOf('.');
+          if (dotIdx < 0) continue;
+          const entity = f.slice(0, dotIdx);
+          const prop = f.slice(dotIdx + 1);
+          if (entity === tableName && measureNames.includes(prop)) {
+            matchedVisuals.push({
+              report: pg.report_name, page: pg.page_name,
+              visual_type: vis.type, measure: prop,
+            });
+          }
+        }
+      }
+    }
+
+    if (matchedPages.length > 0) {
+      mc.used_in_report_pages = matchedPages;
+      const uniqueReports = [...new Set(matchedPages.map(p => p.report))];
+      mc.text += `\nUsed in ${matchedPages.length} report page(s) across ${uniqueReports.length} report(s): ${uniqueReports.join(', ')}`;
+    }
+    if (matchedVisuals.length > 0) {
+      mc.used_in_visuals = matchedVisuals;
+      // Add visual-level detail to text
+      const vizSummary = [...new Set(matchedVisuals.map(v => `${v.measure} in ${v.visual_type} (${v.report}/${v.page})`))];
+      if (vizSummary.length <= 10) {
+        mc.text += `\nVisual usage: ${vizSummary.join('; ')}`;
+      } else {
+        mc.text += `\nUsed in ${matchedVisuals.length} visuals across ${[...new Set(matchedVisuals.map(v => v.report))].length} report(s)`;
+      }
+    }
+  }
+
+  // 5. Enrich report_page chunks with measures_referenced from SM (page + visual level)
+  for (const pg of rptPages) {
+    const smName = (pg.semantic_model_name || '').toLowerCase();
+    if (!smName) continue;
+
+    const measuresReferenced = [];
+    for (const fld of (pg.fields_used || [])) {
+      const fldLower = fld.toLowerCase();
+      if (measureNameToModel[fldLower] && measureNameToModel[fldLower].toLowerCase() === smName) {
+        measuresReferenced.push(fld);
+      }
+    }
+    if (measuresReferenced.length > 0) {
+      pg.measures_referenced = measuresReferenced;
+    }
+
+    // Enrich per-visual measure references
+    for (const vis of (pg.visuals || [])) {
+      const visMeasures = [];
+      for (const f of (vis.fields || [])) {
+        const fLower = f.toLowerCase();
+        if (measureNameToModel[fLower] && measureNameToModel[fLower].toLowerCase() === smName) {
+          visMeasures.push(f);
+        }
+      }
+      if (visMeasures.length > 0) vis.measures_used = visMeasures;
+    }
+  }
+
+  const xrefCount = smOverviews.filter(s => s.used_in_reports).length
+                  + smMeasures.filter(m => m.used_in_report_pages).length
+                  + smMeasures.filter(m => m.used_in_visuals).length
+                  + rptPages.filter(p => p.measures_referenced).length;
+  console.log(`[XREF] Cross-referenced ${xrefCount} chunks (SM↔Report linkage, including visual-level)`);
+}
+
+// ── TMDL Table Parser: extracts columns, measures, partitions, hierarchies from a single table .tmdl ──
+function _parseTmdlTable(payload) {
+  const lines = payload.split('\n');
+  if (lines.length === 0) return null;
+
+  // First line: table <name>
+  const tblMatch = lines[0].match(/^table\s+(?:'([^']+)'|"([^"]+)"|(.+))/);
+  if (!tblMatch) return null;
+  const tableName = (tblMatch[1] || tblMatch[2] || tblMatch[3] || '').trim();
+
+  const result = {
+    name: tableName, columns: [], measures: [], hierarchies: [],
+    isCalculated: false, description: '', lineageTag: '', sourceLineageTag: '',
+    mode: '', partitionSource: '',
+  };
+
+  // Parse table-level properties (lines before first column/measure/partition/hierarchy)
+  let i = 1;
+  while (i < lines.length) {
+    const trimmed = lines[i].trimStart();
+    // Stop at first top-level block element
+    if (/^(column|measure|hierarchy|partition)\s+/i.test(trimmed)) break;
+    if (/^description:\s*/i.test(trimmed)) result.description = trimmed.replace(/^description:\s*/i, '').trim();
+    else if (/^lineageTag:\s*/i.test(trimmed)) result.lineageTag = trimmed.split(':').slice(1).join(':').trim();
+    else if (/^sourceLineageTag:\s*/i.test(trimmed)) result.sourceLineageTag = trimmed.replace(/^sourceLineageTag:\s*/i, '').trim();
+    i++;
+  }
+
+  while (i < lines.length) {
+    const trimmed = lines[i].trimStart();
+
+    // ── Column ──
+    if (/^column\s+/i.test(trimmed)) {
+      const col = _parseTmdlColumn(lines, i);
+      result.columns.push(col.data);
+      i = col.nextLine;
+      continue;
+    }
+
+    // ── Measure ──
+    if (/^measure\s+/i.test(trimmed)) {
+      const meas = _parseTmdlMeasure(lines, i);
+      result.measures.push(meas.data);
+      i = meas.nextLine;
+      continue;
+    }
+
+    // ── Hierarchy ──
+    if (/^hierarchy\s+/i.test(trimmed)) {
+      const hier = _parseTmdlHierarchy(lines, i);
+      result.hierarchies.push(hier.data);
+      i = hier.nextLine;
+      continue;
+    }
+
+    // ── Partition (detect calculated tables + mode + source) ──
+    if (/^partition\s+/i.test(trimmed)) {
+      if (/=\s*calculated/i.test(trimmed)) result.isCalculated = true;
+      // Parse partition sub-properties
+      i++;
+      while (i < lines.length) {
+        const ptrim = lines[i].trimStart();
+        if (/^(column|measure|hierarchy|partition|table|annotation\s+PBI_Id)\s*/i.test(ptrim) && ptrim !== '') break;
+        if (/^mode:\s*/i.test(ptrim)) result.mode = ptrim.split(':')[1].trim();
+        else if (/^source\s*=/i.test(ptrim)) {
+          // Collect multi-line source expression
+          const srcLines = [ptrim.replace(/^source\s*=\s*/i, '')];
+          i++;
+          while (i < lines.length) {
+            const sl = lines[i].trimStart();
+            if (/^(column|measure|hierarchy|partition|table|annotation\s+PBI_Id|mode:)\s*/i.test(sl) && sl !== '') break;
+            if (sl === '') { i++; continue; }
+            srcLines.push(lines[i]);
+            i++;
+          }
+          result.partitionSource = srcLines.join('\n').trim();
+          continue;
+        }
+        i++;
+      }
+      continue;
+    }
+
+    i++;
+  }
+
+  return result;
+}
+
+// Parse a column block starting at line index i
+function _parseTmdlColumn(lines, startIdx) {
+  const header = lines[startIdx].trimStart();
+  const nameMatch = header.match(/^column\s+(?:'([^']+)'|"([^"]+)"|(\S+))/i);
+  const name = nameMatch ? (nameMatch[1] || nameMatch[2] || nameMatch[3] || '').trim() : 'unknown';
+
+  const col = { name };
+
+  // Detect calculated column: "column Name = <DAX expression>"
+  const calcMatch = header.match(/^column\s+(?:'[^']+'|"[^"]+"|[^\s=]+)\s*=\s*(.+)/i);
+  if (calcMatch) {
+    col.isCalculatedColumn = true;
+    col.expression = calcMatch[1].trim();
+  }
+
+  let i = startIdx + 1;
+
+  // Handle backtick-wrapped multi-line expressions for calculated columns
+  let inBacktickBlock = false;
+  const exprLines = [];
+  if (col.isCalculatedColumn && col.expression) {
+    if (col.expression.startsWith('```')) { inBacktickBlock = true; exprLines.push(col.expression); }
+    else exprLines.push(col.expression);
+  }
+
+  while (i < lines.length) {
+    const trimmed = lines[i].trimStart();
+    // Stop at next top-level element (unless inside backtick block)
+    if (/^(column|measure|hierarchy|partition|table|annotation\s+PBI_Id)\s*/i.test(trimmed) && trimmed !== '' && !inBacktickBlock) {
+      break;
+    }
+    if (inBacktickBlock) {
+      exprLines.push(lines[i]);
+      if (trimmed.includes('```')) inBacktickBlock = false;
+      i++; continue;
+    }
+    // Parse properties
+    if (/^dataType:\s*/i.test(trimmed)) col.dataType = trimmed.split(':')[1].trim();
+    else if (/^formatString:\s*/i.test(trimmed)) col.formatString = trimmed.replace(/^formatString:\s*/i, '').trim();
+    else if (/^sourceColumn:\s*/i.test(trimmed)) col.sourceColumn = trimmed.split(':').slice(1).join(':').trim();
+    else if (/^summarizeBy:\s*/i.test(trimmed)) col.summarizeBy = trimmed.split(':')[1].trim();
+    else if (/^isHidden/i.test(trimmed) && !trimmed.includes(':')) col.isHidden = true;
+    else if (/^sortByColumn:\s*/i.test(trimmed)) col.sortByColumn = trimmed.split(':').slice(1).join(':').trim();
+    else if (/^description:\s*/i.test(trimmed)) col.description = trimmed.replace(/^description:\s*/i, '').trim();
+    else if (/^sourceProviderType:\s*/i.test(trimmed)) col.sourceProviderType = trimmed.split(':').slice(1).join(':').trim();
+    else if (/^displayFolder:\s*/i.test(trimmed)) col.displayFolder = trimmed.replace(/^displayFolder:\s*/i, '').trim();
+    i++;
+  }
+
+  // Finalize calculated column expression
+  if (col.isCalculatedColumn && exprLines.length > 0) {
+    col.expression = exprLines.join('\n').replace(/```/g, '').trim();
+  }
+
+  return { data: col, nextLine: i };
+}
+
+// Parse a hierarchy block starting at line index i
+function _parseTmdlHierarchy(lines, startIdx) {
+  const header = lines[startIdx].trimStart();
+  const nameMatch = header.match(/^hierarchy\s+(?:'([^']+)'|"([^"]+)"|(\S+))/i);
+  const name = nameMatch ? (nameMatch[1] || nameMatch[2] || nameMatch[3] || '').trim() : 'unknown';
+
+  const hier = { name, levels: [], lineageTag: '', description: '' };
+  let i = startIdx + 1;
+  let currentLevel = null;
+
+  while (i < lines.length) {
+    const trimmed = lines[i].trimStart();
+    // Stop at next top-level element
+    if (/^(column|measure|hierarchy|partition|table|annotation\s+PBI_Id)\s*/i.test(trimmed) && trimmed !== '') {
+      break;
+    }
+    // Level declaration
+    if (/^level\s+/i.test(trimmed)) {
+      const lvlMatch = trimmed.match(/^level\s+(?:'([^']+)'|"([^"]+)"|(\S+))/i);
+      currentLevel = {
+        name: lvlMatch ? (lvlMatch[1] || lvlMatch[2] || lvlMatch[3] || '').trim() : 'unknown',
+        column: '', ordinal: -1,
+      };
+      hier.levels.push(currentLevel);
+      i++; continue;
+    }
+    // Level sub-properties
+    if (currentLevel) {
+      if (/^column:\s*/i.test(trimmed)) currentLevel.column = trimmed.split(':').slice(1).join(':').trim();
+      else if (/^ordinal:\s*/i.test(trimmed)) currentLevel.ordinal = parseInt(trimmed.split(':')[1].trim(), 10);
+    }
+    // Hierarchy-level properties
+    if (/^lineageTag:\s*/i.test(trimmed)) hier.lineageTag = trimmed.split(':').slice(1).join(':').trim();
+    else if (/^description:\s*/i.test(trimmed) && !currentLevel) hier.description = trimmed.replace(/^description:\s*/i, '').trim();
+    i++;
+  }
+
+  // Sort levels by ordinal if available
+  hier.levels.sort((a, b) => a.ordinal - b.ordinal);
+  return { data: hier, nextLine: i };
+}
+
+// Parse a measure block starting at line index i
+function _parseTmdlMeasure(lines, startIdx) {
+  const header = lines[startIdx].trimStart();
+  const mMatch = header.match(/^measure\s+(?:'([^']+)'|"([^"]+)"|(\S+?))\s*=/i);
+  const name = mMatch ? (mMatch[1] || mMatch[2] || mMatch[3] || '').trim() : 'unknown';
+
+  const eqIdx = header.indexOf('=');
+  let afterEq = eqIdx >= 0 ? header.slice(eqIdx + 1).trim() : '';
+
+  const exprLines = [];
+  let inBacktickBlock = false;
+  if (afterEq.startsWith('```')) { inBacktickBlock = true; exprLines.push(afterEq); }
+  else if (afterEq) exprLines.push(afterEq);
+
+  const mData = { name, expression: '', formatString: '', description: '', displayFolder: '' };
+  let i = startIdx + 1;
+
+  while (i < lines.length) {
+    const trimmed = lines[i].trimStart();
+
+    // Stop at next top-level element (column, measure, hierarchy, partition, table-level annotation)
+    if (/^(column|measure|hierarchy|partition|table|annotation\s+PBI_Id)\s*/i.test(trimmed) && !inBacktickBlock) {
+      break;
+    }
+
+    if (inBacktickBlock) {
+      exprLines.push(lines[i]);
+      if (trimmed.includes('```')) inBacktickBlock = false;
+      i++; continue;
+    }
+
+    // Metadata lines (after expression ends)
+    if (/^formatString:\s*/i.test(trimmed)) { mData.formatString = trimmed.replace(/^formatString:\s*/i, '').trim(); i++; continue; }
+    if (/^description:\s*/i.test(trimmed)) { mData.description = trimmed.replace(/^description:\s*/i, '').trim(); i++; continue; }
+    if (/^displayFolder:\s*/i.test(trimmed)) { mData.displayFolder = trimmed.replace(/^displayFolder:\s*/i, '').trim(); i++; continue; }
+    if (/^(lineageTag|changedProperty|annotation|isHidden)\s*/i.test(trimmed)) { i++; continue; }
+
+    // ``` block start mid-expression
+    if (trimmed.includes('```')) { exprLines.push(lines[i]); inBacktickBlock = !inBacktickBlock; i++; continue; }
+
+    // Blank line — if we have expression content, this may be end of expression
+    if (trimmed === '') { i++; continue; }
+
+    // Indented continuation = expression
+    if (/^\t/.test(lines[i]) || /^\s{2,}/.test(lines[i])) {
+      exprLines.push(lines[i]);
+    }
+    i++;
+  }
+
+  mData.expression = exprLines.join('\n').replace(/```/g, '').trim();
+  return { data: mData, nextLine: i };
+}
+
+// ── TMDL Relationships Parser ──
+function _parseTmdlRelationships(payload) {
+  const rels = [];
+  // Split by "relationship " at start of line (top-level)
+  const blocks = payload.split(/^relationship\s+/m);
+  for (let bi = 1; bi < blocks.length; bi++) {
+    const block = blocks[bi];
+    const fromCol = block.match(/fromColumn:\s*(.+)/);
+    const toCol = block.match(/toColumn:\s*(.+)/);
+    const crossFilter = block.match(/crossFilteringBehavior:\s*(.+)/);
+    const isActiveMatch = block.match(/isActive:\s*(.+)/);
+
+    if (fromCol && toCol) {
+      const fromParts = fromCol[1].trim().split('.');
+      const toParts = toCol[1].trim().split('.');
+      rels.push({
+        from_table: fromParts[0].replace(/^['"]|['"]$/g, ''),
+        from_column: (fromParts[1] || '').replace(/^['"]|['"]$/g, ''),
+        to_table: toParts[0].replace(/^['"]|['"]$/g, ''),
+        to_column: (toParts[1] || '').replace(/^['"]|['"]$/g, ''),
+        crossFilteringBehavior: crossFilter ? crossFilter[1].trim() : 'oneDirection',
+        isActive: isActiveMatch ? isActiveMatch[1].trim().toLowerCase() !== 'false' : true,
+      });
+    }
+  }
+  return rels;
+}
+
+// ── TMDL Perspective Parser ──
+function _parseTmdlPerspective(payload) {
+  const lines = payload.split('\n');
+  if (lines.length === 0) return null;
+
+  const hdr = lines[0].match(/^perspective\s+(?:'([^']+)'|"([^"]+)"|(.+))/);
+  if (!hdr) return null;
+  const name = (hdr[1] || hdr[2] || hdr[3] || '').trim();
+
+  const perspective = { name, tables: [] };
+  let currentTable = null;
+
+  for (let i = 1; i < lines.length; i++) {
+    const trimmed = lines[i].trimStart();
+    if (/^perspectiveTable\s+/i.test(trimmed)) {
+      const tMatch = trimmed.match(/^perspectiveTable\s+(?:'([^']+)'|"([^"]+)"|(\S+))/i);
+      currentTable = {
+        table: tMatch ? (tMatch[1] || tMatch[2] || tMatch[3] || '').trim() : '',
+        measures: [], columns: [], hierarchies: [],
+      };
+      perspective.tables.push(currentTable);
+    } else if (currentTable && /^perspectiveMeasure\s+/i.test(trimmed)) {
+      const mMatch = trimmed.match(/^perspectiveMeasure\s+(?:'([^']+)'|"([^"]+)"|(\S+))/i);
+      if (mMatch) currentTable.measures.push((mMatch[1] || mMatch[2] || mMatch[3] || '').trim());
+    } else if (currentTable && /^perspectiveColumn\s+/i.test(trimmed)) {
+      const cMatch = trimmed.match(/^perspectiveColumn\s+(?:'([^']+)'|"([^"]+)"|(\S+))/i);
+      if (cMatch) currentTable.columns.push((cMatch[1] || cMatch[2] || cMatch[3] || '').trim());
+    } else if (currentTable && /^perspectiveHierarchy\s+/i.test(trimmed)) {
+      const hMatch = trimmed.match(/^perspectiveHierarchy\s+(?:'([^']+)'|"([^"]+)"|(\S+))/i);
+      if (hMatch) currentTable.hierarchies.push((hMatch[1] || hMatch[2] || hMatch[3] || '').trim());
+    }
+  }
+  return perspective;
+}
+
+
 // ── Chain-aware lineage following ────────────────────────────
 function followLineageChain(fieldName) {
-  const chain = { platinum: [], gold: [], silver: [], bronze: [], found: false };
+  const chain = { consumption: [], platinum: [], gold: [], silver: [], bronze: [], found: false };
   if (!fieldName || KNOWLEDGE.length === 0) return chain;
 
   const fieldLower = fieldName.toLowerCase();
   console.log(`[CHAIN] Starting chain trace for field: ${fieldName}`);
+
+  // STEP 0: Consumption layer — find SM measures/columns and reports that reference this field
+  for (const chunk of KNOWLEDGE) {
+    if (chunk.type === 'semantic_model_measures') {
+      // Check if any measure's DAX references this field, or if field IS a measure name
+      const measures = chunk.measures || [];
+      for (const m of measures) {
+        const mNameLower = (m.name || '').toLowerCase();
+        const mExprLower = (m.expression || '').toLowerCase();
+        if (mNameLower === fieldLower || mExprLower.includes(fieldLower)) {
+          chain.consumption.push({
+            type: 'measure', model: chunk.model_name, table: chunk.table_name,
+            measure_name: m.name, expression: m.expression,
+            used_in: chunk.used_in_report_pages || [],
+          });
+          chain.found = true;
+        }
+      }
+    } else if (chunk.type === 'semantic_model_overview' && chunk.tables_detail) {
+      // Check if field is a column in any table of this model
+      for (const [tbl, info] of Object.entries(chunk.tables_detail)) {
+        for (const col of (info.columns || [])) {
+          if ((col.name || '').toLowerCase() === fieldLower) {
+            chain.consumption.push({
+              type: 'column', model: chunk.model_name, table: tbl,
+              column: col.name, dataType: col.dataType, isHidden: col.isHidden,
+            });
+            chain.found = true;
+          }
+        }
+      }
+    } else if (chunk.type === 'report_page') {
+      const pgFields = (chunk.fields_used || []).map(f => f.toLowerCase());
+      if (pgFields.some(f => f.endsWith('.' + fieldLower) || f === fieldLower)) {
+        chain.consumption.push({
+          type: 'report_usage', report: chunk.report_name, page: chunk.page_name,
+          semantic_model: chunk.semantic_model_name || '',
+        });
+        chain.found = true;
+      }
+    }
+  }
+  console.log(`[CHAIN] Consumption: ${chain.consumption.length} refs`);
 
   // STEP 1: Find in Platinum (warehouse_sproc) — parse definition for field mapping
   for (const chunk of KNOWLEDGE) {
@@ -1022,13 +1783,33 @@ function followLineageChain(fieldName) {
     }
   }
   console.log(`[CHAIN] Bronze: ${chain.bronze.length} mappings`);
-  console.log(`[CHAIN] Summary: P=${chain.platinum.length} G=${chain.gold.length} S=${chain.silver.length} B=${chain.bronze.length}`);
+  console.log(`[CHAIN] Summary: C=${chain.consumption.length} P=${chain.platinum.length} G=${chain.gold.length} S=${chain.silver.length} B=${chain.bronze.length}`);
   return chain;
 }
 
 function formatChainContext(chain, fieldName) {
   let ctx = '';
-  ctx += `=== PLATINUM LAYER (Warehouse) ===\n`;
+
+  // Consumption layer (SM + Reports)
+  ctx += `=== CONSUMPTION LAYER (Semantic Models & Reports) ===\n`;
+  if (chain.consumption && chain.consumption.length > 0) {
+    for (const c of chain.consumption) {
+      if (c.type === 'measure') {
+        ctx += `Measure: ${c.model}.${c.table}.${c.measure_name}\n`;
+        ctx += `DAX: ${(c.expression || '').slice(0, 500)}\n`;
+        if (c.used_in.length > 0) ctx += `Used in: ${c.used_in.map(u => `${u.report}/${u.page}`).join(', ')}\n`;
+        ctx += '\n';
+      } else if (c.type === 'column') {
+        ctx += `Column: ${c.model}.${c.table}.${c.column} (${c.dataType||'?'})${c.isHidden ? ' [hidden]' : ''}\n`;
+      } else if (c.type === 'report_usage') {
+        ctx += `Report: ${c.report} → ${c.page}${c.semantic_model ? ' (model: ' + c.semantic_model + ')' : ''}\n`;
+      }
+    }
+  } else {
+    ctx += `(No Semantic Model or Report references found for ${fieldName})\n`;
+  }
+
+  ctx += `\n=== PLATINUM LAYER (Warehouse) ===\n`;
   if (chain.platinum.length > 0) {
     for (const p of chain.platinum) {
       ctx += `Stored Procedure: ${p.sproc}\n`;
@@ -1082,8 +1863,27 @@ function formatChainContext(chain, fieldName) {
   return ctx;
 }
 
+function getPinnedChunkPriority(chunk, queryLower) {
+  const raw = chunk._raw || {};
+  let priority = chunk.score || 0;
+  const modelName = (raw.model_name || '').toLowerCase();
+  const reportName = (raw.report_name || '').toLowerCase();
+  const tableName = (raw.table_name || raw.target_table || '').toLowerCase();
+
+  if (modelName && queryLower.includes(modelName)) priority += 100;
+  if (reportName && queryLower.includes(reportName)) priority += 90;
+  if (tableName && queryLower.includes(tableName)) priority += 60;
+
+  if (chunk.type === 'semantic_model_overview') priority += 40;
+  else if (chunk.type === 'semantic_model_measures') priority += 30;
+  else if (chunk.type === 'semantic_model_relationships') priority += 20;
+
+  if (raw.part_no) priority += Math.max(0, 10 - raw.part_no);
+  return priority;
+}
+
 // ── Entity Pinning: guarantee all chunks for a named entity enter context ──
-function getPinnedChunks(query, scoredChunks) {
+function getPinnedChunks(query, scoredChunks, pinCap = 8000) {
   // 1. Build entity name → chunks index from scored chunks
   const entityIndex = {};  // lowercase name → [chunk indices]
   for (let i = 0; i < scoredChunks.length; i++) {
@@ -1109,15 +1909,19 @@ function getPinnedChunks(query, scoredChunks) {
     }
   }
 
-  // 3. Collect pinned chunks, deduplicated, capped at 8000 chars
+  // 3. Collect pinned chunks, prioritized and capped per query budget
   const pinned = [];
   let pinnedLen = 0;
-  const CAP = 8000;
-  for (const idx of matchedIndices) {
-    const c = scoredChunks[idx];
-    if (pinnedLen + c.text.length > CAP) continue;
+  const orderedMatches = [...matchedIndices]
+    .map(idx => scoredChunks[idx])
+    .sort((a, b) => getPinnedChunkPriority(b, qLower) - getPinnedChunkPriority(a, qLower));
+
+  for (const c of orderedMatches) {
+    const textLen = (c.text || '').length;
+    if (textLen === 0) continue;
+    if (pinnedLen + textLen > pinCap) continue;
     pinned.push(c);
-    pinnedLen += c.text.length;
+    pinnedLen += textLen;
   }
   return pinned;
 }
@@ -1147,9 +1951,12 @@ async function retrieveContext(query) {
       || tokens.some(t => t.startsWith('gen_pbi_'));
     const reportBoost = isReportQuery ? 15 : 0;
 
-    // Detect semantic model queries
-    const isSemanticModelQuery = /semantic.?model|семантич|measure|мерк[аи]|dax|relationship|релаци|SM_|GEN_SM_|tmdl/i.test(query)
-      || tokens.some(t => t.startsWith('gen_sm_') || t.startsWith('sm_'));
+    // Detect semantic model queries — entity name match (language-agnostic) + keyword fallback
+    const knownSmNames = KNOWLEDGE.filter(c => c.type === 'semantic_model_overview').map(c => c.model_name);
+    const isSemanticModelQuery = knownSmNames.some(n => queryLower.includes(n.toLowerCase()))
+      || /semantic.?model|семантич|measure|мерк[аи]|dax|relationship|релаци|SM_|GEN_SM_|tmdl/i.test(query)
+      || tokens.some(t => t.startsWith('gen_sm_') || t.startsWith('sm_'))
+      || stickyEntities.some(s => s.type === 'Semantic Model');  // sticky SM → boost SM retrieval
     const semanticModelBoost = isSemanticModelQuery ? 15 : 0;
 
     // Detect impact analysis queries
@@ -1183,7 +1990,7 @@ async function retrieveContext(query) {
       if (chain.found) {
         // Chain context gets unlimited budget — Bronze must never be truncated
         const chainCtx = formatChainContext(chain, fieldName);
-        console.log(`[RAG] Chain context: ${chainCtx.length} chars (P=${chain.platinum.length} G=${chain.gold.length} S=${chain.silver.length} B=${chain.bronze.length})`);
+        console.log(`[RAG] Chain context: ${chainCtx.length} chars (C=${chain.consumption.length} P=${chain.platinum.length} G=${chain.gold.length} S=${chain.silver.length} B=${chain.bronze.length})`);
         window._lastChainQuery = true;
         // Append supplementary normal search with reduced budget (chain has priority)
         // This adds breadth without sacrificing chain completeness
@@ -1239,16 +2046,38 @@ async function retrieveContext(query) {
           text = `Report Overview: ${chunk.report_name}\nWorkspace: ${chunk.workspace||''}\nSemantic Model: ${chunk.semantic_model_name||chunk.semantic_model_id||'?'}\nPages: ${chunk.page_count||0}, Visuals: ${chunk.total_visuals||0}\nTables used: ${(chunk.unique_tables||[]).join(', ')}\nFields: ${(chunk.unique_fields||[]).join(', ')}`;
           score += 6 + reportBoost;
         } else if (chunk.type === 'report_page') {
-          text = `Report Page: ${chunk.report_name} → ${chunk.page_name}\nVisuals: ${chunk.visual_count||0} (${Object.entries(chunk.visual_types||{}).map(([k,v])=>`${k}:${v}`).join(', ')})\nTables: ${(chunk.tables_used||[]).join(', ')}\nFields: ${(chunk.fields_used||[]).join(', ')}`;
+          text = `Report Page: ${chunk.report_name} → ${chunk.page_name}\nSemantic Model: ${chunk.semantic_model_name||''}\nVisuals: ${chunk.visual_count||0} (${Object.entries(chunk.visual_types||{}).map(([k,v])=>`${k}:${v}`).join(', ')})\nTables: ${(chunk.tables_used||[]).join(', ')}\nFields: ${(chunk.fields_used||[]).join(', ')}`;
+          if (chunk.measures_referenced && chunk.measures_referenced.length > 0) text += `\nMeasures referenced: ${chunk.measures_referenced.join(', ')}`;
           score += 5 + reportBoost;
         } else if (chunk.type === 'report_impact') {
           text = `Impact Analysis: table "${chunk.table_name}" is used in ${chunk.report_count||0} report(s): ${(chunk.report_names||[]).join(', ')}\nDetails: ${(chunk.used_in_reports||[]).slice(0,30).map(u=>`${u.report_name}/${u.page_name}: ${u.field}`).join('; ')}`;
           score += 4 + reportBoost + impactBoost;
         } else if (chunk.type === 'semantic_model_overview') {
-          text = chunk.text || `Semantic Model: ${chunk.model_name}`;
+          // Include column details for richer AI context
+          let detailLines = chunk.text || `Semantic Model: ${chunk.model_name}`;
+          if (chunk.tables_detail) {
+            const tblDetails = Object.entries(chunk.tables_detail).map(([tbl, info]) => {
+              const cols = (info.columns||[]).map(c => {
+                let s = c.name;
+                if (c.dataType) s += ` (${c.dataType})`;
+                if (c.isHidden) s += ' [hidden]';
+                return s;
+              }).join(', ');
+              return `  ${tbl}: ${cols}`;
+            }).join('\n');
+            detailLines += '\nColumns per table:\n' + tblDetails;
+          }
+          if (chunk.used_in_reports && chunk.used_in_reports.length > 0) {
+            detailLines += `\nUsed in reports: ${chunk.used_in_reports.join(', ')}`;
+          }
+          text = detailLines;
           score += 6 + semanticModelBoost;
         } else if (chunk.type === 'semantic_model_measures') {
           text = chunk.text || `Measures: ${chunk.model_name}::${chunk.table_name}`;
+          if (chunk.used_in_report_pages && chunk.used_in_report_pages.length > 0) {
+            const uniqueRpts = [...new Set(chunk.used_in_report_pages.map(p => p.report))];
+            text += `\nUsed in reports: ${uniqueRpts.join(', ')}`;
+          }
           score += 8 + semanticModelBoost;
         } else if (chunk.type === 'semantic_model_relationships') {
           text = chunk.text || `Relationships: ${chunk.model_name}`;
@@ -1391,17 +2220,73 @@ async function retrieveContext(query) {
       }
       return 0;
     });
-    // Budget: lineage queries get 20k; warehouse/pipeline/report/SM 16k; default 12k
-    let ctx = '', budget = isLineageQuery ? 20000 : (isWarehouseQuery || isPipelineQuery || isReportQuery || isImpactQuery || isSemanticModelQuery) ? 16000 : 12000;
+    // Budget: SM queries get 80k; lineage 20k; warehouse/pipeline/report 16k; default 12k
+    let ctx = '', budget = isSemanticModelQuery ? 80000 : isLineageQuery ? 20000 : (isWarehouseQuery || isPipelineQuery || isReportQuery || isImpactQuery) ? 16000 : 12000;
 
     // ── Entity Pinning: guarantee all chunks for a named entity enter context ──
-    const pinned = getPinnedChunks(query, chunks);
+    const pinCap = isSemanticModelQuery ? Math.min(budget, 40000) : Math.min(budget, 8000);
+    const pinned = getPinnedChunks(query, chunks, pinCap);
     if (pinned.length > 0) {
       for (const p of pinned) {
         ctx += p.text + '\n---\n';
         p._included = true;
       }
-      console.log(`[RAG] Entity pinning: ${pinned.length} chunks pinned (${ctx.length} chars)`);
+      console.log(`[RAG] Entity pinning: ${pinned.length} chunks pinned (${ctx.length} chars, cap=${pinCap})`);
+    }
+
+    // ── Facts block: inject authoritative SM summary when entity is detected ──
+    if (isSemanticModelQuery && pinned.length > 0) {
+      const smNames = new Set();
+      for (const p of pinned) {
+        const mn = (p._raw || {}).model_name;
+        if (mn) smNames.add(mn);
+      }
+      for (const smName of smNames) {
+        const smLower = smName.toLowerCase();
+        const ov = KNOWLEDGE.find(c => c.type === 'semantic_model_overview' && (c.model_name || '').toLowerCase() === smLower);
+        if (!ov) continue;
+        // Build Level 2 facts block: counts + full inventory
+        const lines = [`[AUTHORITATIVE FACTS — ${smName}]`];
+        lines.push(`Tables: ${ov.table_count} | Columns: ${ov.column_count || 0} | Measures: ${ov.measure_count} | Relationships: ${ov.relationship_count || 0}`);
+        if (ov.used_in_reports && ov.used_in_reports.length > 0) {
+          lines.push(`Used in reports: ${ov.used_in_reports.join(', ')}`);
+        }
+        // Table inventory
+        if (ov.tables_detail) {
+          const tblLines = Object.entries(ov.tables_detail).map(([tbl, info]) => {
+            const mc = info.measure_count || 0;
+            const cc = (info.columns || []).length;
+            return `  ${tbl} (${cc} cols${mc > 0 ? `, ${mc} measures` : ''}${info.isCalculated ? ', calculated' : ''})`;
+          });
+          lines.push(`Table inventory:\n${tblLines.join('\n')}`);
+        }
+        // Measure name inventory (just names, no DAX)
+        const measChunks = KNOWLEDGE
+          .filter(c => c.type === 'semantic_model_measures' && (c.model_name || '').toLowerCase() === smLower)
+          .sort((a, b) => (a.part_no || 1) - (b.part_no || 1));
+        const allMeasureNames = [];
+        for (const mc of measChunks) {
+          for (const m of (mc.measures || [])) {
+            if (m.name) allMeasureNames.push(m.name);
+          }
+        }
+        if (allMeasureNames.length > 0) {
+          lines.push(`All measures (${allMeasureNames.length}): ${allMeasureNames.join(', ')}`);
+        }
+        // Relationship inventory
+        const relChunk = KNOWLEDGE.find(c => c.type === 'semantic_model_relationships' && (c.model_name || '').toLowerCase() === smLower);
+        if (relChunk && relChunk.relationships) {
+          const relLines = relChunk.relationships.map(r => {
+            let s = `  ${r.from_table}.${r.from_column} → ${r.to_table}.${r.to_column}`;
+            if (r.crossFilteringBehavior && r.crossFilteringBehavior !== 'oneDirection') s += ` [${r.crossFilteringBehavior}]`;
+            if (!r.isActive) s += ' [INACTIVE]';
+            return s;
+          });
+          lines.push(`Relationships:\n${relLines.join('\n')}`);
+        }
+        ctx = lines.join('\n') + '\n---\n' + ctx;
+        console.log(`[RAG] Facts block injected for ${smName} (${lines.join('\n').length} chars)`);
+      }
     }
 
     for (const c of chunks) {
@@ -2873,6 +3758,138 @@ async function visualizePipeline(userText) {
   console.log(`[SKILL] Pipeline visualization rendered: ${displayName}, ${nodes.length} nodes, ${edges.length} edges`);
 }
 
+// ── Sticky Context: entity detection & management ─────────────
+function _buildEntityIndex() {
+  // Build a map of known entity names → {type, name} from KNOWLEDGE
+  const index = []; // [{name, nameLower, entityType}]
+  const seen = new Set();
+  for (const chunk of KNOWLEDGE) {
+    let name = null, entityType = null;
+    if (chunk.type === 'semantic_model_overview') { name = chunk.model_name; entityType = 'Semantic Model'; }
+    else if (chunk.type === 'report_overview') { name = chunk.report_name; entityType = 'Report'; }
+    else if (chunk.type === 'execution_chain') { name = chunk.pipeline; entityType = 'Pipeline'; }
+    if (!name || seen.has(name.toLowerCase())) continue;
+    seen.add(name.toLowerCase());
+    index.push({ name, nameLower: name.toLowerCase(), entityType });
+  }
+  // Sort longest first so "SM_Basic_Insurance_Benchmarks" matches before "SM_Basic"
+  index.sort((a, b) => b.nameLower.length - a.nameLower.length);
+  return index;
+}
+
+function _extractEntityContext(entityName) {
+  const nameLower = entityName.toLowerCase();
+  const chunks = KNOWLEDGE.filter(c => {
+    const mn = (c.model_name || c.report_name || c.pipeline || '').toLowerCase();
+    return mn === nameLower;
+  });
+  if (chunks.length === 0) return '';
+
+  // Build Level 2 facts block + full chunk texts
+  const lines = [];
+  const overview = chunks.find(c => c.type === 'semantic_model_overview' || c.type === 'report_overview' || c.type === 'execution_chain');
+  if (overview) {
+    if (overview.type === 'semantic_model_overview') {
+      lines.push(`[PINNED CONTEXT — ${entityName}]`);
+      lines.push(`Type: Semantic Model | Tables: ${overview.table_count} | Columns: ${overview.column_count || 0} | Measures: ${overview.measure_count} | Relationships: ${overview.relationship_count || 0}`);
+      if (overview.used_in_reports && overview.used_in_reports.length > 0)
+        lines.push(`Used in reports: ${overview.used_in_reports.join(', ')}`);
+      // Table inventory
+      if (overview.tables_detail) {
+        const tblLines = Object.entries(overview.tables_detail).map(([tbl, info]) => {
+          const mc = info.measure_count || 0;
+          const cc = (info.columns || []).length;
+          return `  ${tbl} (${cc} cols${mc > 0 ? `, ${mc} measures` : ''}${info.isCalculated ? ', calculated' : ''})`;
+        });
+        lines.push(`Table inventory:\n${tblLines.join('\n')}`);
+      }
+      // All measure names
+      const measChunks = chunks.filter(c => c.type === 'semantic_model_measures').sort((a, b) => (a.part_no || 1) - (b.part_no || 1));
+      const allNames = [];
+      for (const mc of measChunks) for (const m of (mc.measures || [])) if (m.name) allNames.push(m.name);
+      if (allNames.length > 0) lines.push(`All measures (${allNames.length}): ${allNames.join(', ')}`);
+    } else if (overview.type === 'report_overview') {
+      lines.push(`[PINNED CONTEXT — ${entityName}]`);
+      lines.push(`Type: Report | Pages: ${overview.page_count || 0} | Visuals: ${overview.total_visuals || 0} | SM: ${overview.semantic_model_name || '?'}`);
+      if (overview.unique_tables) lines.push(`Tables used: ${overview.unique_tables.join(', ')}`);
+    } else if (overview.type === 'execution_chain') {
+      lines.push(`[PINNED CONTEXT — ${entityName}]`);
+      lines.push(`Type: Pipeline | Activities: ${overview.activity_count || 0} | Notebooks: ${(overview.notebooks || []).join(' → ') || 'none'}`);
+      if (overview.target_tables) lines.push(`Affects tables: ${overview.target_tables.slice(0, 30).join(', ')}`);
+    }
+  }
+
+  // Append all chunk texts
+  for (const c of chunks) {
+    if (c.text) lines.push('---\n' + c.text);
+  }
+  return lines.join('\n');
+}
+
+function detectAndPinEntities(text) {
+  if (!KNOWLEDGE || KNOWLEDGE.length === 0) return;
+  const qLower = text.toLowerCase();
+  const entityIndex = _buildEntityIndex();
+  const newEntities = [];
+
+  for (const ent of entityIndex) {
+    if (!qLower.includes(ent.nameLower)) continue;
+    // Already pinned?
+    if (stickyEntities.some(s => s.name.toLowerCase() === ent.nameLower)) continue;
+    newEntities.push(ent);
+  }
+
+  for (const ent of newEntities) {
+    const contextText = _extractEntityContext(ent.name);
+    if (!contextText) continue;
+    // Evict oldest if at max
+    if (stickyEntities.length >= MAX_STICKY) stickyEntities.shift();
+    stickyEntities.push({ name: ent.name, type: ent.entityType, text: contextText });
+    console.log(`[STICKY] Pinned: ${ent.entityType} "${ent.name}" (${contextText.length} chars)`);
+  }
+
+  renderStickyBar();
+}
+
+function removeStickyEntity(name) {
+  stickyEntities = stickyEntities.filter(s => s.name !== name);
+  renderStickyBar();
+}
+
+function clearStickyContext() {
+  stickyEntities = [];
+  renderStickyBar();
+}
+
+function renderStickyBar() {
+  stickyBar.innerHTML = '';
+  if (stickyEntities.length === 0) {
+    stickyBar.classList.remove('has-items');
+    return;
+  }
+  stickyBar.classList.add('has-items');
+
+  const ICONS = { 'Semantic Model': '📊', 'Report': '📄', 'Pipeline': '⚙️' };
+  for (const ent of stickyEntities) {
+    const pill = document.createElement('span');
+    pill.className = 'sticky-context-pill';
+    pill.innerHTML = `<span class="pill-icon">${ICONS[ent.type] || '📌'}</span> ${ent.name} <span class="pill-close" title="Remove">✕</span>`;
+    pill.querySelector('.pill-close').addEventListener('click', () => removeStickyEntity(ent.name));
+    stickyBar.appendChild(pill);
+  }
+
+  const clearBtn = document.createElement('button');
+  clearBtn.className = 'sticky-context-clear';
+  clearBtn.textContent = 'Clear all';
+  clearBtn.addEventListener('click', clearStickyContext);
+  stickyBar.appendChild(clearBtn);
+}
+
+function getStickyContextText() {
+  if (stickyEntities.length === 0) return '';
+  return stickyEntities.map(s => s.text).join('\n\n') + '\n\n';
+}
+
 // ── Skill detection ────────────────────────────────────────────
 function detectSkill(text) {
   const t = text.trim().toLowerCase();
@@ -2904,6 +3921,9 @@ async function sendMessage(text) {
   // Trim history
   if (chatHistory.length > MAX_HISTORY) chatHistory = chatHistory.slice(-MAX_HISTORY);
 
+  // ── Sticky context: detect and pin entities mentioned in this message ──
+  detectAndPinEntities(text);
+
   // ── Skill detection — intercept before sending to Claude ────
   const skill = detectSkill(text);
   if (skill) {
@@ -2934,11 +3954,15 @@ async function sendMessage(text) {
   chatArea.appendChild(spinner);
   chatArea.scrollTop = chatArea.scrollHeight;
 
-  // RAG context
+  // RAG context + sticky context
   const context = await retrieveContext(text);
+  const stickyCtx = getStickyContextText();
   let systemWithContext = SYSTEM_PROMPT;
   if (window._lastChainQuery) {
     systemWithContext += '\n\nIMPORTANT: The context contains a multi-layer lineage chain from Platinum (Warehouse) to Bronze (Landing). Trace and explain each step of the transformation pipeline, layer by layer. Show how the field flows through each layer with specific column names and transformations.';
+  }
+  if (stickyCtx) {
+    systemWithContext += '\n\nPINNED CONTEXT (always available, authoritative):\n' + stickyCtx;
   }
   systemWithContext += '\n\nCONTEXT:\n' + context;
 
@@ -2957,7 +3981,14 @@ async function sendMessage(text) {
       appendMessage('assistant', '⚠️ Error: ' + (data.error.message || data.error));
     } else {
       const reply = data.content ? data.content.map(c => c.text).join('') : 'No response';
-      appendMessage('assistant', reply);
+      // Extract token usage from Claude response
+      let usageInfo = null;
+      if (data.usage) {
+        const inp = data.usage.input_tokens || 0;
+        const out = data.usage.output_tokens || 0;
+        usageInfo = recordUsage(inp, out);
+      }
+      appendMessage('assistant', reply, usageInfo);
       chatHistory.push({ role: 'assistant', content: reply });
     }
   } catch (err) {
@@ -2969,7 +4000,7 @@ async function sendMessage(text) {
   }
 }
 
-function appendMessage(role, content) {
+function appendMessage(role, content, usageInfo) {
   const div = document.createElement('div');
   div.className = `message ${role}`;
   const label = document.createElement('div');
@@ -2998,6 +4029,15 @@ function appendMessage(role, content) {
   }
   div.appendChild(label);
   div.appendChild(bubble);
+  // Show token usage info under assistant messages
+  if (role === 'assistant' && usageInfo) {
+    const info = document.createElement('div');
+    info.className = 'token-info';
+    info.innerHTML = `<span>⬆ ${formatTokens(usageInfo.inputTokens)} in</span>`
+      + `<span>⬇ ${formatTokens(usageInfo.outputTokens)} out</span>`
+      + `<span class="cost">$${usageInfo.cost.toFixed(4)}</span>`;
+    div.appendChild(info);
+  }
   chatArea.appendChild(div);
   chatArea.scrollTop = chatArea.scrollHeight;
 }
@@ -3067,6 +4107,7 @@ document.querySelectorAll('.prompt-send').forEach(btn => {
 
 // ── Init ───────────────────────────────────────────────────────
 loadData();
+updateUsageSummary();
 </script>
 </body>
 </html>
