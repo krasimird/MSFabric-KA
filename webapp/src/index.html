@@ -405,6 +405,72 @@ let aiAnalysis = null;
 let analysisReady = false; // true when JSONL knowledge or IndexedDB has lineage data
 let PIPELINE_INDEX = {};  // pipeline name/activity name → pipeline item name (built on load)
 
+// ── Follow-up Query Expansion ─────────────────────────────────
+let _lastUserQuery = '';  // previous user query for follow-up detection
+
+// Stop-words that carry no topical meaning (BG + EN)
+const _FOLLOWUP_STOPWORDS = new Set([
+  // Bulgarian
+  'а','в','и','на','за','от','до','ли','пък','но','как','кои','кое','какво',
+  'какви','има','ще','може','зоната','зона','слой','слоя','ниво','нивото',
+  'таблици','таблиците','колони','колоните','мерки','мерките','полета',
+  'участват','участва','показват','покажи','кажи','обясни','опиши',
+  // English
+  'the','a','an','in','at','of','for','and','or','but','is','are','what',
+  'which','how','show','tell','explain','tables','columns','measures','fields',
+  'zone','layer','level',
+]);
+
+// Layer-reference keywords that signal a follow-up about a different layer
+const _LAYER_KEYWORDS = /\b(gold|silver|bronze|platinum|staging|stg|raw|бронз|силвър|голд|платинум|стейджинг|warehouse|dwh|lakehouse)\b/i;
+
+/**
+ * Detect if `currentQuery` is a follow-up and expand it with topic keywords
+ * from `previousQuery`. Returns the expanded query for RAG search only
+ * (the original query is still sent to Claude for natural conversation).
+ */
+function expandFollowUpQuery(currentQuery, previousQuery) {
+  if (!previousQuery) return currentQuery;
+
+  const cur = currentQuery.trim();
+  const curLower = cur.toLowerCase();
+
+  // Heuristics: is this a follow-up?
+  // 1. Starts with a connective (а, и, но, a, and, but, what about)
+  const startsWithConnective = /^(а\b|и\b|но\b|пък\b|ами\b|а как|and\b|but\b|what about|how about|also)/i.test(cur);
+
+  // 2. Short query (< 60 chars) that mentions a layer but no real topic
+  const mentionsLayer = _LAYER_KEYWORDS.test(cur);
+  const curTopicTokens = curLower.replace(/[^a-zа-яё0-9_]/gi, ' ').split(/\s+/)
+    .filter(t => t.length > 2 && !_FOLLOWUP_STOPWORDS.has(t) && !_LAYER_KEYWORDS.test(t));
+  const hasNoTopic = curTopicTokens.length <= 1;
+  const isShort = cur.length < 80;
+
+  const isFollowUp = startsWithConnective || (isShort && mentionsLayer && hasNoTopic);
+
+  if (!isFollowUp) {
+    console.log(`[FOLLOWUP] Not a follow-up: "${cur.slice(0, 60)}…"`);
+    return currentQuery;
+  }
+
+  // Extract topic keywords from previous query (skip stop-words & layer keywords)
+  const prevLower = previousQuery.toLowerCase();
+  const prevTokens = prevLower.replace(/[^a-zа-яё0-9_]/gi, ' ').split(/\s+/)
+    .filter(t => t.length > 2 && !_FOLLOWUP_STOPWORDS.has(t));
+
+  if (prevTokens.length === 0) return currentQuery;
+
+  // Merge: current query + previous topic keywords (deduplicated)
+  const curTokenSet = new Set(curLower.replace(/[^a-zа-яё0-9_]/gi, ' ').split(/\s+/).filter(t => t.length > 2));
+  const newTokens = prevTokens.filter(t => !curTokenSet.has(t));
+
+  if (newTokens.length === 0) return currentQuery;
+
+  const expanded = currentQuery + ' ' + newTokens.join(' ');
+  console.log(`[FOLLOWUP] Expanded: "${currentQuery}" → "${expanded}"`);
+  return expanded;
+}
+
 // ── Sticky Context ────────────────────────────────────────────
 const MAX_STICKY = 3;
 let stickyEntities = []; // [{name, type, text}] — max 3
@@ -1930,43 +1996,48 @@ function getPinnedChunks(query, scoredChunks, pinCap = 8000) {
 async function retrieveContext(query) {
   if (!KB) return '(No data loaded)';
   try {
-    const queryLower = query.toLowerCase();
+    // ── Follow-up query expansion: merge topic keywords from previous query ──
+    const expandedQuery = expandFollowUpQuery(query, _lastUserQuery);
+    const queryLower = expandedQuery.toLowerCase();
     // Keep compound tokens (underscore-joined field names) AND split into parts
     const rawTokens = queryLower.replace(/[^a-z0-9а-яё_]/gi, ' ').split(/\s+/).filter(t => t.length > 2);
     const compoundTokens = rawTokens.filter(t => t.includes('_')); // e.g. "premium_paid_amount_bgn_mode"
     const splitTokens = rawTokens.flatMap(t => t.includes('_') ? t.split('_').filter(p => p.length > 2) : [t]);
     const tokens = [...new Set([...compoundTokens, ...splitTokens])]; // deduplicate
 
+    // Use expandedQuery for all query-type detections so follow-ups inherit topic
+    const detectQ = expandedQuery;
+
     // Detect warehouse/Platinum queries
-    const isWarehouseQuery = /platinum|warehouse|dwh|stored.?proc|sproc|хранилищ|платинум/i.test(query);
+    const isWarehouseQuery = /platinum|warehouse|dwh|stored.?proc|sproc|хранилищ|платинум/i.test(detectQ);
     const warehouseBoost = isWarehouseQuery ? 12 : 0;
 
     // Detect pipeline queries — keyword match OR any token matches a pipeline/activity name
-    const isPipelineQuery = /pipeline|пайплайн|оркестрац|orchestrat|activity|активит|datapipeline/i.test(query)
+    const isPipelineQuery = /pipeline|пайплайн|оркестрац|orchestrat|activity|активит|datapipeline/i.test(detectQ)
       || tokens.some(t => PIPELINE_INDEX[t]);
     const pipelineBoost = isPipelineQuery ? 15 : 0;
 
     // Detect report queries — report names (GEN_PBI_*) or report-related keywords
-    const isReportQuery = /report|репорт|визуализаци|dashboard|дашборд|GEN_PBI_|засегнати.?report|кои.?report|страниц|page/i.test(query)
+    const isReportQuery = /report|репорт|визуализаци|dashboard|дашборд|GEN_PBI_|засегнати.?report|кои.?report|страниц|page/i.test(detectQ)
       || tokens.some(t => t.startsWith('gen_pbi_'));
     const reportBoost = isReportQuery ? 15 : 0;
 
     // Detect semantic model queries — entity name match (language-agnostic) + keyword fallback
     const knownSmNames = KNOWLEDGE.filter(c => c.type === 'semantic_model_overview').map(c => c.model_name);
     const isSemanticModelQuery = knownSmNames.some(n => queryLower.includes(n.toLowerCase()))
-      || /semantic.?model|семантич|measure|мерк[аи]|dax|relationship|релаци|SM_|GEN_SM_|tmdl/i.test(query)
+      || /semantic.?model|семантич|measure|мерк[аи]|dax|relationship|релаци|SM_|GEN_SM_|tmdl/i.test(detectQ)
       || tokens.some(t => t.startsWith('gen_sm_') || t.startsWith('sm_'))
       || stickyEntities.some(s => s.type === 'Semantic Model');  // sticky SM → boost SM retrieval
     const semanticModelBoost = isSemanticModelQuery ? 15 : 0;
 
     // Detect impact analysis queries
-    const isImpactQuery = /impact|засегнат|ако промен|if.*change|кои.?report.*използва|използва.?таблиц|affected|зависим/i.test(query);
+    const isImpactQuery = /impact|засегнат|ако промен|if.*change|кои.?report.*използва|използва.?таблиц|affected|зависим/i.test(detectQ);
     const impactBoost = isImpactQuery ? 18 : 0;
 
     // Detect chain lineage queries (end-to-end tracing)
-    const isChainQuery = /от платинум до бронз|end.to.end|full lineage|пълен lineage|проследи до|проследи линеадж|trace.*lineage|от.+до бронз|platinum.*bronze|бронз.*платинум|откъде идва|where does.*come from|lineage.*бронз/i.test(query);
+    const isChainQuery = /от платинум до бронз|end.to.end|full lineage|пълен lineage|проследи до|проследи линеадж|trace.*lineage|от.+до бронз|platinum.*bronze|бронз.*платинум|откъде идва|where does.*come from|lineage.*бронз/i.test(detectQ);
 
-    console.log(`[RAG] Query: "${query}"`);
+    console.log(`[RAG] Query: "${query}"${expandedQuery !== query ? ` → expanded: "${expandedQuery}"` : ''}`);
     console.log(`[RAG] Tokens (${tokens.length}): ${tokens.join(', ')}`);
     console.log(`[RAG] Compound tokens: ${compoundTokens.join(', ') || 'none'}`);
     console.log(`[RAG] Warehouse query: ${isWarehouseQuery}, Pipeline query: ${isPipelineQuery}, Chain query: ${isChainQuery}, Report query: ${isReportQuery}, Impact query: ${isImpactQuery}, SemanticModel query: ${isSemanticModelQuery}`);
@@ -1978,7 +2049,15 @@ async function retrieveContext(query) {
     }
 
     // Detect lineage queries (field origin, source tracing — broader than full chain)
-    const isLineageQuery = isChainQuery || /откъде|lineage|произход|source.*field|source.*column|where.*from|идва от|трансформац|transformation/i.test(query);
+    const isLineageQuery = isChainQuery || /откъде|lineage|произход|source.*field|source.*column|where.*from|идва от|трансформац|transformation/i.test(detectQ);
+
+    // Detect layer-specific filter for follow-up queries ("а в GOLD зоната")
+    let layerFilter = null;
+    if (/\bgold\b|голд/i.test(query)) layerFilter = 'gold';
+    else if (/\bsilver\b|силвър|staging|stg\b|стейджинг/i.test(query)) layerFilter = 'silver';
+    else if (/\bbronze\b|бронз/i.test(query)) layerFilter = 'bronze';
+    else if (/\bplatinum\b|платинум|warehouse\b|dwh\b/i.test(query)) layerFilter = 'platinum';
+    const layerBoost = layerFilter ? 20 : 0;
 
     // ── Chain lineage: follow Platinum→Gold→Silver→Bronze ────
     // Try compound tokens first, then any underscore-containing token as field name
@@ -2023,6 +2102,13 @@ async function retrieveContext(query) {
         for (const t of splitTokens) if (blob.includes(t)) score++;
 
         if (score === 0) continue;
+
+        // Layer-specific boost: when user asks about a specific layer, boost matching chunks
+        if (layerFilter) {
+          const chunkLayer = (chunk.layer || '').toLowerCase();
+          if (chunkLayer.includes(layerFilter)) score += layerBoost;
+        }
+
         // Format based on chunk type
         let text = '';
         if (chunk.type === 'field_detail') {
@@ -3922,7 +4008,9 @@ async function sendMessage(text) {
   if (chatHistory.length > MAX_HISTORY) chatHistory = chatHistory.slice(-MAX_HISTORY);
 
   // ── Sticky context: detect and pin entities mentioned in this message ──
-  detectAndPinEntities(text);
+  // Use expanded query so follow-ups inherit entity names from previous question
+  const expandedForPinning = expandFollowUpQuery(text, _lastUserQuery);
+  detectAndPinEntities(expandedForPinning);
 
   // ── Skill detection — intercept before sending to Claude ────
   const skill = detectSkill(text);
@@ -3954,8 +4042,9 @@ async function sendMessage(text) {
   chatArea.appendChild(spinner);
   chatArea.scrollTop = chatArea.scrollHeight;
 
-  // RAG context + sticky context
+  // RAG context + sticky context (store query for follow-up expansion)
   const context = await retrieveContext(text);
+  _lastUserQuery = text;  // save AFTER retrieval so current Q uses previous Q for expansion
   const stickyCtx = getStickyContextText();
   let systemWithContext = SYSTEM_PROMPT;
   if (window._lastChainQuery) {
