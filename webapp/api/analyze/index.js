@@ -158,12 +158,12 @@ function chunkToText(chunk) {
   if (chunk.definition) parts.push(chunk.definition.slice(0, 2000));
   if (chunk.description) parts.push(chunk.description.slice(0, 2000));
   if (chunk.tables_detail) parts.push(JSON.stringify(chunk.tables_detail).slice(0, 3000));
-  if (chunk.measures) parts.push(chunk.measures.map(m => `${m.name}: ${m.expression || ""}`).join("; ").slice(0, 3000));
-  if (chunk.columns) parts.push(chunk.columns.map(c => c.name || c).join(", ").slice(0, 1000));
-  if (chunk.items) parts.push((Array.isArray(chunk.items) ? chunk.items : []).join(", ").slice(0, 2000));
+  if (Array.isArray(chunk.measures)) parts.push(chunk.measures.map(m => `${m.name}: ${m.expression || ""}`).join("; ").slice(0, 3000));
+  if (Array.isArray(chunk.columns)) parts.push(chunk.columns.map(c => c.name || c).join(", ").slice(0, 1000));
+  if (Array.isArray(chunk.items)) parts.push(chunk.items.join(", ").slice(0, 2000));
   if (chunk.schema && chunk.name) parts.push(`${chunk.schema}.${chunk.name}`);
-  if (chunk.table_references) parts.push(`references: ${chunk.table_references.join(", ").slice(0, 1000)}`);
-  if (chunk.activities) parts.push(`activities: ${chunk.activities.map(a => a.name || a).join(", ").slice(0, 1000)}`);
+  if (Array.isArray(chunk.table_references)) parts.push(`references: ${chunk.table_references.join(", ").slice(0, 1000)}`);
+  if (Array.isArray(chunk.activities)) parts.push(`activities: ${chunk.activities.map(a => a.name || a).join(", ").slice(0, 1000)}`);
   return parts.join("\n") || JSON.stringify(chunk).slice(0, 4000);
 }
 
@@ -400,7 +400,9 @@ function buildLakehouseChunks(KB, itemLookup) {
 function buildBronzeMetaChunks(KB) {
   const chunks = [];
   if (!KB.metadata || !KB.metadata.bronze_meta) return chunks;
-  for (const entry of KB.metadata.bronze_meta) {
+  const bronzeArr = Array.isArray(KB.metadata.bronze_meta) ? KB.metadata.bronze_meta : Object.values(KB.metadata.bronze_meta);
+  for (const entry of bronzeArr) {
+    if (!entry || typeof entry !== 'object') continue;
     const tblName = entry.table_name || entry.name || '';
     if (!tblName) continue;
     const cols = (entry.columns || []).map(c => ({ name: c.name, dataType: c.dataType || c.data_type, nullable: c.nullable }));
@@ -1075,29 +1077,26 @@ module.exports = async function (context, req) {
     const itemLookup = buildItemLookup(KB);
     log(`Item lookup: ${Object.keys(itemLookup).length} items.`);
 
-    log(`[${elapsed()}s] Step 5c: Building lakehouse chunks...`);
-    const lakehouseChunks = buildLakehouseChunks(KB, itemLookup);
-    log(`Built ${lakehouseChunks.length} lakehouse table chunks.`);
+    // Each builder is wrapped in try/catch to prevent one failure from crashing the pipeline
+    const safeBuilder = (label, fn) => {
+      try {
+        log(`[${elapsed()}s] ${label}...`);
+        const result = fn();
+        log(`  → ${result.length} chunks`);
+        return result;
+      } catch (err) {
+        log(`  ✗ ${label} FAILED: ${err.message}`);
+        log(`    Stack: ${(err.stack || '').split('\n').slice(0, 3).join(' | ')}`);
+        return [];
+      }
+    };
 
-    log(`[${elapsed()}s] Step 5d: Building bronze meta chunks...`);
-    const bronzeChunks = buildBronzeMetaChunks(KB);
-    log(`Built ${bronzeChunks.length} bronze meta chunks.`);
-
-    log(`[${elapsed()}s] Step 5e: Building semantic model chunks...`);
-    const smChunks = buildSemanticModelChunks(KB, itemLookup);
-    log(`Built ${smChunks.length} semantic model chunks.`);
-
-    log(`[${elapsed()}s] Step 5f: Building pipeline chunks...`);
-    const pipelineChunks = buildPipelineChunks(KB, itemLookup);
-    log(`Built ${pipelineChunks.length} pipeline chunks.`);
-
-    log(`[${elapsed()}s] Step 5g: Building notebook chunks...`);
-    const notebookChunks = buildNotebookChunks(KB, itemLookup);
-    log(`Built ${notebookChunks.length} notebook chunks.`);
-
-    log(`[${elapsed()}s] Step 5h: Building report chunks...`);
-    const reportChunks = buildReportChunks(KB, itemLookup);
-    log(`Built ${reportChunks.length} report chunks.`);
+    const lakehouseChunks = safeBuilder('Step 5c: Building lakehouse chunks', () => buildLakehouseChunks(KB, itemLookup));
+    const bronzeChunks = safeBuilder('Step 5d: Building bronze meta chunks', () => buildBronzeMetaChunks(KB));
+    const smChunks = safeBuilder('Step 5e: Building semantic model chunks', () => buildSemanticModelChunks(KB, itemLookup));
+    const pipelineChunks = safeBuilder('Step 5f: Building pipeline chunks', () => buildPipelineChunks(KB, itemLookup));
+    const notebookChunks = safeBuilder('Step 5g: Building notebook chunks', () => buildNotebookChunks(KB, itemLookup));
+    const reportChunks = safeBuilder('Step 5h: Building report chunks', () => buildReportChunks(KB, itemLookup));
 
     // Collect all extra chunks for catalog generation
     const allExtraChunks = [...lakehouseChunks, ...bronzeChunks, ...smChunks, ...pipelineChunks, ...notebookChunks, ...reportChunks];
