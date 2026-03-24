@@ -1,0 +1,445 @@
+╔══════════════════════════════════════════════════════════╗
+║  GenDWH KA — Universal Extraction                        ║
+╚══════════════════════════════════════════════════════════╝
+════════════════════════════════════════════════════════════
+STEP 1 — DISCOVERY
+════════════════════════════════════════════════════════════
+  Found 12 workspace(s)
+  📁 My workspace
+    2 items
+  📁 DEV_DWH_PoC_WS
+    52 items
+  📁 DEV_DWHProj_WS
+    20 items
+  📁 Microsoft Fabric Capacity Metrics
+    2 items
+  📁 GenDWH_Data_WS_D
+    25 items
+  📁 GenDWH_Dev_WS_D
+    86 items
+  📁 GenDWH_Data_WS_T
+    31 items
+  📁 GenDWH_Dev_WS_T
+    58 items
+  📁 GenDWH_Data_WS_P
+    6 items
+  📁 GenDWH_Dev_WS_P
+    1 items
+  📁 GenDWH_Controlling_UWS_D
+    6 items
+  📁 GenDWH_Underwriting_UWS
+    14 items
+
+  Total: 12 workspaces, 303 items
+
+════════════════════════════════════════════════════════════
+STEP 2 — DEFINITION EXTRACTION
+════════════════════════════════════════════════════════════
+  ⚠ OneLake catalog governance report (automatically generated) (Report): 'NoneType' object has no attribute 'get'
+  ⚠ OneLake catalog governance report (automatically generated) (SemanticModel): 'NoneType' object has no attribute 'get'
+  ⚠ DEV_DWH_PoC_Report_ImportMode (Report): 'NoneType' object has no attribute 'get'
+  ⚠ DEV_DWH_PoC_Report_DirectLake (1) (Report): 'NoneType' object has no attribute 'get'
+  ⚠ DEV_DWH_PoC_LKH_Bronze (SemanticModel): 'NoneType' object has no attribute 'get'
+  ⚠ DEV_DWH_PoC_LKH_Silver (SemanticModel): 'NoneType' object has no attribute 'get'
+  ⚠ DEV_DWH_PoC_LKH_Administration (SemanticModel): 'NoneType' object has no attribute 'get'
+  ⚠ DEV_DWH_PoC_LKH_Gold (SemanticModel): 'NoneType' object has no attribute 'get'
+  ⚠ DEV_DWH_PoC_Semantic_model_DirectLake (SemanticModel): 'NoneType' object has no attribute 'get'
+  ⚠ DEV_DWH_PoC_Semantic_model_ImportMode (SemanticModel): 'NoneType' object has no attribute 'get'
+  ⚠ StagingLakehouseForDataflows (SemanticModel): 'NoneType' object has no attribute 'get'
+  ⚠ StagingWarehouseForDataflows (SemanticModel): 'NoneType' object has no attribute 'get'
+  ⚠ DEV_DWH_PoC_LKH_Gold (SQLEndpoint): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/c74e6929-7db0-46f3-b94a-e2ef7a737e04/items/c6ad4426-4d99-4de6-b83b-e25639606375/getDefinition
+  ⚠ StagingLakehouseForDataflows (SQLEndpoint): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/c74e6929-7db0-46f3-b94a-e2ef7a737e04/items/c5cd2b69-294e-4fb7-a9a2-eb0a59f1d985/getDefinition
+  ⚠ DEV_DWH_PoC_LKH_Bronze (SQLEndpoint): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/c74e6929-7db0-46f3-b94a-e2ef7a737e04/items/8eb964e6-f878-4816-ad69-4328d7be34b5/getDefinition
+  ⚠ DEV_DWH_PoC_LKH_Administration (SQLEndpoint): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/c74e6929-7db0-46f3-b94a-e2ef7a737e04/items/5c3b81d6-7da4-4b10-b94c-5a93a05b9cae/getDefinition
+  ⚠ DEV_DWH_PoC_LKH_Silver (SQLEndpoint): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/c74e6929-7db0-46f3-b94a-e2ef7a737e04/items/ce463525-27e6-4a6a-9ded-e81d2e537cef/getDefinition
+  ⚠ StagingWarehouseForDataflows (Warehouse): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/c74e6929-7db0-46f3-b94a-e2ef7a737e04/items/13ec9dbf-7512-41ae-9039-9681a3c23a25/getDefinition
+  ✓ DEV_DWH_PoC_LKH_Bronze (Lakehouse): 3 part(s)
+  ✓ DEV_DWH_PoC_LKH_Silver (Lakehouse): 3 part(s)
+  ✓ DEV_DWH_PoC_LKH_Administration (Lakehouse): 3 part(s)
+  ⚠ DEV_DWH_PoC_Administration_CreateMetadataTable (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ DEV_DWH_PoC_InitialCreateExternalSilverTables (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ DEV_DWH_PoC_LoadingSilverDimDate (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ DEV_DWH_PoC_LoadingSilverDimAgents (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ DEV_DWH_PoC_LoadingSilverDimInsurances (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ DEV_DWH_PoC_LoadingSilverDimCurrencies (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ DEV_DWH_PoC_LoadingSilverDimOffice (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ DEV_DWH_PoC_LoadingSilverDimClients (Notebook): 'NoneType' object has no attribute 'get'
+  ✓ DEV_DWH_PoC_LoadingSilverLayer (DataPipeline): 2 part(s)
+  ✓ DEV_DWH_PoC_LoadingGoldLayer (DataPipeline): 2 part(s)
+  ✓ DEV_DWH_PoC_OrchestrationBronzeSilverGold (DataPipeline): 2 part(s)
+  ✓ DEV_DWH_PoC_LoadingOnPremTablesToBronzeLakehouse (DataPipeline): 2 part(s)
+  ⚠ DEV_DWH_PoC_LoadingSilverDimBranches (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ DEV_DWH_PoC_LoadingSilverDimPolici (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ DEV_DWH_PoC_LoadingSilverFactPdPrem (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ DEV_DWH_PoC_LoadingSilverFactWrtPrem (Notebook): 'NoneType' object has no attribute 'get'
+  ✓ DEV_DWH_PoC_LKH_Gold (Lakehouse): 3 part(s)
+  ⚠ DEV_DWH_PoC_InitialCreateGoldTables (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ DEV_DWH_PoC_LoadingGoldDimAgents (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ DEV_DWH_PoC_LoadingGoldDimBranches (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ DEV_DWH_PoC_LoadingGoldDimClients (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ DEV_DWH_PoC_LoadingGoldDimCurrencies (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ DEV_DWH_PoC_LoadingGoldDimInsurances (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ DEV_DWH_PoC_LoadingGoldDimPolici (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ DEV_DWH_PoC_LoadingGoldFactPdPrem (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ DEV_DWH_PoC_LoadingGoldFactWrtPrem (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ DEV_DWH_PoC_LoadingGoldFactPoliciBalance (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ DEV_DWH_PoC_CreateIDPFilter (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ Notebook 1 (Notebook): 'NoneType' object has no attribute 'get'
+  ⏳ Rate limited, waiting 2s...
+  ⏳ Rate limited, waiting 4s...
+  ⏳ Rate limited, waiting 6s...
+  ✓ Notebook 2 (Notebook): 0 part(s)
+  ⏳ Rate limited, waiting 2s...
+  ⏳ Rate limited, waiting 4s...
+  ⏳ Rate limited, waiting 6s...
+  ✓ UDEnv (Environment): 0 part(s)
+  ⏳ Rate limited, waiting 2s...
+  ⏳ Rate limited, waiting 4s...
+  ⏳ Rate limited, waiting 6s...
+  ✓ StagingLakehouseForDataflows (Lakehouse): 0 part(s)
+  ⏳ Rate limited, waiting 2s...
+  ⏳ Rate limited, waiting 4s...
+  ⚠ My Power BI Activator Alerts (Reflex): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/c74e6929-7db0-46f3-b94a-e2ef7a737e04/items/0315c5b4-3eaf-4d1a-9302-0622a17f0d8a/getDefinition
+  ⚠ DEV_DWHProj_Administration (SemanticModel): 'NoneType' object has no attribute 'get'
+  ⚠ DEV_DWHProj_LH_Bronze (SemanticModel): 'NoneType' object has no attribute 'get'
+  ⚠ DEV_DWHProj_Administration (SQLEndpoint): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/7b561278-2c47-4877-a655-733cf95fad9b/items/136930dc-f247-4c9d-aec6-52fb5be7af5a/getDefinition
+  ⚠ DEV_DWHProj_LH_Bronze (SQLEndpoint): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/7b561278-2c47-4877-a655-733cf95fad9b/items/fbe667f9-ff51-481d-a76b-204d1a2f952e/getDefinition
+  ✓ DEV_DWHProj_Administration (Lakehouse): 3 part(s)
+  ⚠ DEV_DWHProj_CreateMetadataTable (Notebook): 'NoneType' object has no attribute 'get'
+  ✓ DEV_DWHProj_LH_Bronze (Lakehouse): 3 part(s)
+  ✓ DEV_DWHProj_LoadingBronzeFromLanding (DataPipeline): 3 part(s)
+  ⚠ DevWorks (Notebook): 'NoneType' object has no attribute 'get'
+  ✓ testing_copyjob (CopyJob): 2 part(s)
+  ✓ dev_pipe (DataPipeline): 2 part(s)
+  ⚠ P_AND_P_Comm (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ GROSS_B2_01_Staging_Razsrochki (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ CopyTablesToParquet_dev_works (Notebook): 'NoneType' object has no attribute 'get'
+  ✓ test_tables_to_files (DataPipeline): 3 part(s)
+  ⚠ VT_Dev_testing (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ Test_Tables_Create (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ Logging (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ Template_SparkSQL_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ Template_SQL_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ Fabric Capacity Metrics (Report): 'NoneType' object has no attribute 'get'
+  ⚠ Fabric Capacity Metrics (SemanticModel): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_Administration_LH (SQLEndpoint): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/0d9babf2-4421-4fd2-bad5-1cfaf057fad6/items/048fba9b-ae66-435e-a5ae-8a1bcad1f35e/getDefinition
+  ⚠ GenDWH_Bronze_LH (SQLEndpoint): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/0d9babf2-4421-4fd2-bad5-1cfaf057fad6/items/dace90dc-1844-4157-b56a-cb0d9a20331a/getDefinition
+  ⚠ GenDWH_SilverRaw_LH (SQLEndpoint): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/0d9babf2-4421-4fd2-bad5-1cfaf057fad6/items/1c206d28-278b-4417-b02e-2082a85f62e8/getDefinition
+  ⚠ GenDWH_SilverStg_LH (SQLEndpoint): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/0d9babf2-4421-4fd2-bad5-1cfaf057fad6/items/0daf07db-714a-4043-8c19-7e25dc5c6e57/getDefinition
+  ⚠ GenDWH_GoldDWH_LH (SQLEndpoint): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/0d9babf2-4421-4fd2-bad5-1cfaf057fad6/items/519a7d34-1e4b-46cc-93e7-0f36d3c43002/getDefinition
+  ⚠ GenDWH_GoldCDWH_LH (SQLEndpoint): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/0d9babf2-4421-4fd2-bad5-1cfaf057fad6/items/1ed52129-0c98-4226-873c-d2aa3d869faa/getDefinition
+  ⚠ GenDWH_GoldIFRS_LH (SQLEndpoint): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/0d9babf2-4421-4fd2-bad5-1cfaf057fad6/items/4eb3974b-1bd9-40b0-8eac-0059b49e4599/getDefinition
+  ⚠ GenDWH_GoldSemantic_LH (SQLEndpoint): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/0d9babf2-4421-4fd2-bad5-1cfaf057fad6/items/42988e95-229b-494c-8c31-57e15d1a2b4b/getDefinition
+  ✓ GenDWH_Administration_LH (Lakehouse): 3 part(s)
+  ✓ GenDWH_Bronze_LH (Lakehouse): 3 part(s)
+  ✓ GenDWH_SilverRaw_LH (Lakehouse): 3 part(s)
+  ✓ GenDWH_SilverStg_LH (Lakehouse): 3 part(s)
+  ✓ GenDWH_GoldDWH_LH (Lakehouse): 3 part(s)
+  ✓ GenDWH_GoldCDWH_LH (Lakehouse): 3 part(s)
+  ✓ GenDWH_GoldIFRS_LH (Lakehouse): 3 part(s)
+  ✓ GenDWH_GoldSemantic_LH (Lakehouse): 3 part(s)
+  ⚠ GenDWH_Initial_Create_Bronze_Tables_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_Initial_Create_Silver_Tables_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_Initial_Create_Gold_Tables_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ 01_GenDWH_Data_WS_LHS_Deployment_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_environment (Environment): 'NoneType' object has no attribute 'get'
+  ⚠ 02_GenDWH_Data_WS_DDLs_Deployment_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ fw (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_Variables (VariableLibrary): 'NoneType' object has no attribute 'get'
+  ✓ GenDWH_Items_Deployment_DP (DataPipeline): 2 part(s)
+  ⚠ GEN_PBI_Casco_Report_Import.pbix (Dashboard): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/f5ae753e-9be5-4236-8e0b-89e2ca21084c/items/2bfc11ab-e4b9-453e-a40b-d0f5177c44b5/getDefinition
+  ⚠ GEN_PBI_Written_Premium_v0 (Report): 'NoneType' object has no attribute 'get'
+  ⏳ Rate limited, waiting 2s...
+  ⏳ Rate limited, waiting 4s...
+  ⏳ Rate limited, waiting 6s...
+  ✓ GEN_PBI_Premium_per_clients_v1 (Report): 0 part(s)
+  ⏳ Rate limited, waiting 2s...
+  ⏳ Rate limited, waiting 4s...
+  ⏳ Rate limited, waiting 6s...
+  ✓ GEN_PBI_Active_policies (Report): 0 part(s)
+  ⏳ Rate limited, waiting 2s...
+  ⏳ Rate limited, waiting 4s...
+  ⏳ Rate limited, waiting 6s...
+  ✓ GEN_PBI_Forecast_Report (Report): 0 part(s)
+  ⚠ GEN_PBI_Casco_Report_Import (Report): 'NoneType' object has no attribute 'get'
+  ⚠ Gen_SM_Written_Premium_v0 (SemanticModel): 'NoneType' object has no attribute 'get'
+  ⚠ GEN_SM_Policy (SemanticModel): 'NoneType' object has no attribute 'get'
+  ⚠ SM_DWH_Policy_premiums_claims_recourses (SemanticModel): 'NoneType' object has no attribute 'get'
+  ⚠ SM Underwriters (SemanticModel): 'NoneType' object has no attribute 'get'
+  ⚠ SM_REVENUE_FORECAST (SemanticModel): 'NoneType' object has no attribute 'get'
+  ⚠ GEN_PBI_Casco_Report_Import (SemanticModel): 'NoneType' object has no attribute 'get'
+  ⚠ SM_Basic_Insurance_Benchmarks (SemanticModel): 'NoneType' object has no attribute 'get'
+  ⚠ GEN_Paginated_Casco_Report (PaginatedReport): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/f5ae753e-9be5-4236-8e0b-89e2ca21084c/items/d2afb2d6-8c67-4b0a-9989-16c5b99e41de/getDefinition
+  ⚠ GenDWH_Administration_LH (SQLEndpoint): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/f5ae753e-9be5-4236-8e0b-89e2ca21084c/items/af191619-c084-4504-b1c8-b4c793abdd04/getDefinition
+  ⚠ GenDWH_Bronze_LH (SQLEndpoint): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/f5ae753e-9be5-4236-8e0b-89e2ca21084c/items/24d8fcc8-beb4-4626-adac-f487f99a48fc/getDefinition
+  ⚠ GenDWH_SilverRaw_LH (SQLEndpoint): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/f5ae753e-9be5-4236-8e0b-89e2ca21084c/items/b1688ac8-0b6f-4b59-9d61-e25e3667c6d3/getDefinition
+  ⚠ GenDWH_SilverStg_LH (SQLEndpoint): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/f5ae753e-9be5-4236-8e0b-89e2ca21084c/items/704a4bad-8a4a-4f81-8185-959557a18a28/getDefinition
+  ⚠ GenDWH_GoldDWH_LH (SQLEndpoint): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/f5ae753e-9be5-4236-8e0b-89e2ca21084c/items/0aec6f02-93ff-473d-9307-4277889242c7/getDefinition
+  ⚠ GenDWH_GoldCDWH_LH (SQLEndpoint): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/f5ae753e-9be5-4236-8e0b-89e2ca21084c/items/d746cdbd-3677-4637-aa8e-b8709c3e26c1/getDefinition
+  ⚠ GenDWH_GoldIFRS_LH (SQLEndpoint): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/f5ae753e-9be5-4236-8e0b-89e2ca21084c/items/030feff6-75be-4d2a-8580-fc3108cc187a/getDefinition
+  ⚠ GenDWH_GoldSemantic_LH (SQLEndpoint): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/f5ae753e-9be5-4236-8e0b-89e2ca21084c/items/1f5677eb-6a1e-4eda-aaa3-187f2bcacd09/getDefinition
+  ⚠ GenDWH_PlatinumDWH_DWH (Warehouse): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/f5ae753e-9be5-4236-8e0b-89e2ca21084c/items/f7f155f4-aef7-45fb-b81c-f64192d502a3/getDefinition
+  ⚠ GenDWH_Documentation_LH (SQLEndpoint): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/f5ae753e-9be5-4236-8e0b-89e2ca21084c/items/cdd0bdfd-c7b3-438c-9f97-993fa912b529/getDefinition
+  ✓ GenDWH_Administration_LH (Lakehouse): 3 part(s)
+  ✓ GenDWH_Bronze_LH (Lakehouse): 3 part(s)
+  ✓ GenDWH_SilverRaw_LH (Lakehouse): 3 part(s)
+  ✓ GenDWH_SilverStg_LH (Lakehouse): 3 part(s)
+  ✓ GenDWH_GoldDWH_LH (Lakehouse): 3 part(s)
+  ✓ GenDWH_GoldCDWH_LH (Lakehouse): 3 part(s)
+  ✓ GenDWH_GoldIFRS_LH (Lakehouse): 3 part(s)
+  ✓ GenDWH_GoldSemantic_LH (Lakehouse): 3 part(s)
+  ✓ GenDWH_Orchestration_DP (DataPipeline): 3 part(s)
+  ⚠ GenDWH_LogCopyActivityResults_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ 03_GenDWH_Dev_WS_Populate_Metadata_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_Migration_Scripts_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_Loading_SCD1_Merge_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_Loading_SCD2_Merge_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ Orchestrator_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_Loading_SCD1_overwrite_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_environment (Environment): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_Populate_Gold_Metadata_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_Populate_Bronze_Metadata_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ Staging Scripts for UPR and DAC Tables (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ Staging Scripts for GROSS FACT Tables (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ Staging Scripts for CEDED FACT Tables (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ vt_dev_testing (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ 01_GenDWH_Dev_WS_Lakehouses_Deployment_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ List tables and fields (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ 02_GenDWH_Dev_WS_Shortcuts_Deployment_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ ReadMe_Administration_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ ReadMe_Bronze_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ ReadMe_Silver_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ ReadMe_Gold_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ ReadMe_Reporting_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⏳ Rate limited, waiting 2s...
+  ⏳ Rate limited, waiting 4s...
+  ⏳ Rate limited, waiting 6s...
+  ✓ ReadMe_General_NB (Notebook): 0 part(s)
+  ⏳ Rate limited, waiting 2s...
+  ⏳ Rate limited, waiting 4s...
+  ⏳ Rate limited, waiting 6s...
+  ✓ 04_GenDWH_Create_Orchestration_DP_Content_NB (Notebook): 0 part(s)
+  ⏳ Rate limited, waiting 2s...
+  ⏳ Rate limited, waiting 4s...
+  ⏳ Rate limited, waiting 6s...
+  ✓ ValioTestNotebook (Notebook): 0 part(s)
+  ⏳ Rate limited, waiting 2s...
+  ⏳ Rate limited, waiting 4s...
+  ⚠ GenDWH_CDWH_Functions_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_CDWH_Execution_BGN_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_Delta_Table_Maintenance_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_CDWH_Execution_EUR_NB_TBD (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ gk_dev_testing (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_PlatinumStoredProcedures_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ✓ GenDWH_PlatinumControlling_FULL_DP (DataPipeline): 2 part(s)
+  ⚠ GenDWH_Bronze_logging_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_Variables (VariableLibrary): 'NoneType' object has no attribute 'get'
+  ✓ GenDWH_PlatinumUnderwriting_DELTA_DP (DataPipeline): 2 part(s)
+  ✓ GenDWH_PlatinumUnderwriting_FULL_DP (DataPipeline): 2 part(s)
+  ⚠ fw (Notebook): 'NoneType' object has no attribute 'get'
+  ✓ GenDWH_CDWH_Export_DP (DataPipeline): 2 part(s)
+  ⚠ GenDWH_Refresh_GolDWH_Endpoint_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_CDWH_Execution_EUR_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_CDWH_Execution_BGN_NB_TBD (Notebook): 'NoneType' object has no attribute 'get'
+  ✓ GenDWH_Items_Deployment_DP (DataPipeline): 2 part(s)
+  ⚠ GenDWH_Populate_Silver_Metadata_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ Export_Large_Dataset_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ UPR_Testing (Notebook): 'NoneType' object has no attribute 'get'
+  ✓ GenDWH_Large_Datasets_Export_DP (DataPipeline): 2 part(s)
+  ⚠ DAC_BSP_Testing (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ SM_Insurance_Benchmarks_memory analyzer_8181 (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ load_initial_UPR_DAC_history (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ fw_2 (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ Orchestrator_NB_2 (Notebook): 'NoneType' object has no attribute 'get'
+  ✓ GenDWH_Documentation_LH (Lakehouse): 4 part(s)
+  ⚠ GenDWH_KA_Extraction (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_Administration_LH (SemanticModel): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_Bronze_LH (SemanticModel): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_SilverRaw_LH (SemanticModel): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_SilverStg_LH (SemanticModel): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_GoldDWH_LH (SemanticModel): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_GoldCDWH_LH (SemanticModel): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_GoldIFRS_LH (SemanticModel): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_GoldSemantic_LH (SemanticModel): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_Administration_LH (SQLEndpoint): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/bbffbdb4-fd23-483d-aa3a-50d601ae58f2/items/dc9643d7-75e9-4b82-8783-629d1059d37a/getDefinition
+  ⚠ GenDWH_Bronze_LH (SQLEndpoint): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/bbffbdb4-fd23-483d-aa3a-50d601ae58f2/items/f8f2cb93-0338-484d-951f-7314a5488b1f/getDefinition
+  ⚠ GenDWH_SilverRaw_LH (SQLEndpoint): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/bbffbdb4-fd23-483d-aa3a-50d601ae58f2/items/3124bcf4-20c6-4302-9586-e6a36c66c76a/getDefinition
+  ⚠ GenDWH_SilverStg_LH (SQLEndpoint): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/bbffbdb4-fd23-483d-aa3a-50d601ae58f2/items/1530c2d7-d1ed-474a-96b4-f15086f106c6/getDefinition
+  ⚠ GenDWH_GoldDWH_LH (SQLEndpoint): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/bbffbdb4-fd23-483d-aa3a-50d601ae58f2/items/09d24c08-98d6-4669-8752-a4ec9366c96c/getDefinition
+  ⚠ GenDWH_GoldCDWH_LH (SQLEndpoint): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/bbffbdb4-fd23-483d-aa3a-50d601ae58f2/items/38f47f2a-5910-4e86-86e2-bd9bb323ca5a/getDefinition
+  ⚠ GenDWH_GoldIFRS_LH (SQLEndpoint): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/bbffbdb4-fd23-483d-aa3a-50d601ae58f2/items/99eca9f4-c843-4ad7-95fa-1df89dfe0334/getDefinition
+  ⚠ GenDWH_GoldSemantic_LH (SQLEndpoint): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/bbffbdb4-fd23-483d-aa3a-50d601ae58f2/items/f7086d61-5563-470d-8e59-d2e61a369dac/getDefinition
+  ⚠ GenDWH_Initial_Create_Bronze_Tables_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_Initial_Create_Silver_Tables_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_Initial_Create_Gold_Tables_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_environment (Environment): 'NoneType' object has no attribute 'get'
+  ⚠ 01_GenDWH_Data_WS_LHS_Deployment_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ 02_GenDWH_Data_WS_DDLs_Deployment_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⏳ Rate limited, waiting 2s...
+  ⏳ Rate limited, waiting 4s...
+  ⏳ Rate limited, waiting 6s...
+  ✓ GenDWH_Administration_LH (Lakehouse): 0 part(s)
+  ⏳ Rate limited, waiting 2s...
+  ⏳ Rate limited, waiting 4s...
+  ⏳ Rate limited, waiting 6s...
+  ✓ GenDWH_Bronze_LH (Lakehouse): 0 part(s)
+  ⏳ Rate limited, waiting 2s...
+  ⏳ Rate limited, waiting 4s...
+  ⏳ Rate limited, waiting 6s...
+  ✓ GenDWH_SilverRaw_LH (Lakehouse): 0 part(s)
+  ⏳ Rate limited, waiting 2s...
+  ⏳ Rate limited, waiting 4s...
+  ⏳ Rate limited, waiting 6s...
+  ✓ GenDWH_SilverStg_LH (Lakehouse): 0 part(s)
+  ✓ GenDWH_GoldDWH_LH (Lakehouse): 3 part(s)
+  ✓ GenDWH_GoldCDWH_LH (Lakehouse): 3 part(s)
+  ✓ GenDWH_GoldIFRS_LH (Lakehouse): 3 part(s)
+  ✓ GenDWH_GoldSemantic_LH (Lakehouse): 3 part(s)
+  ⚠ fw (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_Administration_LH (SemanticModel): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_Bronze_LH (SemanticModel): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_SilverRaw_LH (SemanticModel): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_SilverStg_LH (SemanticModel): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_GoldDWH_LH (SemanticModel): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_GoldCDWH_LH (SemanticModel): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_GoldIFRS_LH (SemanticModel): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_GoldSemantic_LH (SemanticModel): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_Administration_LH (SQLEndpoint): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/93875bac-1927-44cd-9a62-e171e7d8ec45/items/c5b6656e-eea8-4506-9b77-6e2fc532d0ca/getDefinition
+  ⚠ GenDWH_Bronze_LH (SQLEndpoint): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/93875bac-1927-44cd-9a62-e171e7d8ec45/items/0f068892-8732-4dec-9c79-bf073dba995f/getDefinition
+  ⚠ GenDWH_SilverRaw_LH (SQLEndpoint): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/93875bac-1927-44cd-9a62-e171e7d8ec45/items/2881eee3-284b-400e-9828-78b97306d6bc/getDefinition
+  ⚠ GenDWH_SilverStg_LH (SQLEndpoint): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/93875bac-1927-44cd-9a62-e171e7d8ec45/items/ea3993d5-b971-4ff3-bffe-c94deb7e9f55/getDefinition
+  ⚠ GenDWH_GoldDWH_LH (SQLEndpoint): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/93875bac-1927-44cd-9a62-e171e7d8ec45/items/8982520e-4594-4fb5-acba-1f4bc0700e61/getDefinition
+  ⚠ GenDWH_GoldCDWH_LH (SQLEndpoint): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/93875bac-1927-44cd-9a62-e171e7d8ec45/items/0002bd12-47d4-49a6-968c-100e3bca3ba2/getDefinition
+  ⚠ GenDWH_GoldIFRS_LH (SQLEndpoint): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/93875bac-1927-44cd-9a62-e171e7d8ec45/items/e98d79f0-4b0b-4b8a-96ce-1233f6b5353e/getDefinition
+  ⚠ GenDWH_GoldSemantic_LH (SQLEndpoint): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/93875bac-1927-44cd-9a62-e171e7d8ec45/items/80c426e9-b6e4-409f-a298-6d1a29427e91/getDefinition
+  ⚠ GenDWH_PlatinumDWH_DWH (Warehouse): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/93875bac-1927-44cd-9a62-e171e7d8ec45/items/9e3f1e49-4e38-472f-bff4-5d8602ff47ad/getDefinition
+  ✓ GenDWH_Orchestration_DP (DataPipeline): 3 part(s)
+  ⚠ GenDWH_LogCopyActivityResults_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ 03_GenDWH_Dev_WS_Populate_Metadata_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_Populate_Gold_Metadata_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_Populate_Bronze_Metadata_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ ReadMe_Administration_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ ReadMe_Bronze_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ ReadMe_Silver_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ ReadMe_Gold_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ ReadMe_Reporting_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ ReadMe_General_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_environment (Environment): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_Loading_SCD1_Merge_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_Loading_SCD2_Merge_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ Orchestrator_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_Loading_SCD1_overwrite_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ 01_GenDWH_Dev_WS_Lakehouses_Deployment_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ 02_GenDWH_Dev_WS_Shortcuts_Deployment_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ✓ GenDWH_Administration_LH (Lakehouse): 3 part(s)
+  ✓ GenDWH_Bronze_LH (Lakehouse): 3 part(s)
+  ✓ GenDWH_SilverRaw_LH (Lakehouse): 3 part(s)
+  ✓ GenDWH_SilverStg_LH (Lakehouse): 3 part(s)
+  ✓ GenDWH_GoldDWH_LH (Lakehouse): 3 part(s)
+  ✓ GenDWH_GoldCDWH_LH (Lakehouse): 3 part(s)
+  ✓ GenDWH_GoldIFRS_LH (Lakehouse): 3 part(s)
+  ✓ GenDWH_GoldSemantic_LH (Lakehouse): 3 part(s)
+  ⚠ 04_GenDWH_Create_Orchestration_DP_Content_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_Migration_Scripts_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⏳ Rate limited, waiting 2s...
+  ⏳ Rate limited, waiting 4s...
+  ⏳ Rate limited, waiting 6s...
+  ✓ GenDWH_CDWH_Functions_NB (Notebook): 0 part(s)
+  ⏳ Rate limited, waiting 2s...
+  ⏳ Rate limited, waiting 4s...
+  ⏳ Rate limited, waiting 6s...
+  ✓ GenDWH_CDWH_Execution_BGN_NB (Notebook): 0 part(s)
+  ⏳ Rate limited, waiting 2s...
+  ⏳ Rate limited, waiting 4s...
+  ⏳ Rate limited, waiting 6s...
+  ✓ GenDWH_Delta_Table_Maintenance_NB (Notebook): 0 part(s)
+  ⚠ GenDWH_CDWH_Execution_EUR_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_PlatinumStoredProcedures_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_Bronze_logging_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ fw (Notebook): 'NoneType' object has no attribute 'get'
+  ✓ GenDWH_PlatinumUnderwriting_DELTA_DP (DataPipeline): 2 part(s)
+  ✓ GenDWH_PlatinumUnderwriting_FULL_DP (DataPipeline): 2 part(s)
+  ⚠ GenDWH_Variables (VariableLibrary): 'NoneType' object has no attribute 'get'
+  ✓ GenDWH_Items_Deployment_DP (DataPipeline): 2 part(s)
+  ✓ GenDWH_CDWH_Export_DP (DataPipeline): 2 part(s)
+  ⚠ GenDWH_Populate_Silver_Metadata_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_Initial_Create_Bronze_Tables_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_Initial_Create_Silver_Tables_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_Initial_Create_Gold_Tables_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_environment (Environment): 'NoneType' object has no attribute 'get'
+  ⚠ 01_GenDWH_Data_WS_LHS_Deployment_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ 02_GenDWH_Data_WS_DDLs_Deployment_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ✓ GenDWH_Orchestration_DP (DataPipeline): 2 part(s)
+  ⚠ Controlling_LH (SemanticModel): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_PolicyPremiumsCommissions_SM (SemanticModel): 'NoneType' object has no attribute 'get'
+  ⚠ Controlling_LH (SQLEndpoint): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/e37efa59-946c-4e65-88cc-8a57b35c0e44/items/cdf13adc-9b47-4c8e-94ec-19783b6e2149/getDefinition
+  ⚠ GenDWH_Bronze_LH (SQLEndpoint): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/e37efa59-946c-4e65-88cc-8a57b35c0e44/items/1267576e-9fe6-44b4-a9f6-d201152bd324/getDefinition
+  ⚠ Controlling_LH (Lakehouse): 404 Client Error: Not Found for url: https://api.fabric.microsoft.com/v1/workspaces/e37efa59-946c-4e65-88cc-8a57b35c0e44/items/0a27cd93-73d3-41ae-9f00-e5e7d6130246/getDefinition
+  ⚠ GenDWH_Bronze_LH (Lakehouse): 404 Client Error: Not Found for url: https://api.fabric.microsoft.com/v1/workspaces/e37efa59-946c-4e65-88cc-8a57b35c0e44/items/988eba7f-92a2-445d-b295-8f753eaa1118/getDefinition
+  ⚠ GEN_PBI_AUTOMATE_STRING_TEST.pbix (Dashboard): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/e07dd3d7-9b9d-47d7-91d9-4f7942a8bb3b/items/2287cea0-efc6-4823-82c2-c6428ca0996c/getDefinition
+  ⚠ GEN_PBI_Casco_Report_Import (Report): 'NoneType' object has no attribute 'get'
+  ⚠ Report Usage Metrics Report (Report): 'NoneType' object has no attribute 'get'
+  ⚠ GEN_PBI_AUTOMATE_STRING_TEST (Report): 'NoneType' object has no attribute 'get'
+  ⚠ GEN_PBI_EXPORT_POC (Report): 'NoneType' object has no attribute 'get'
+  ⚠ GEN_PBI_Premiums_Showcase (Report): 'NoneType' object has no attribute 'get'
+  ⚠ GEN_PBI_Casco_Report_Import (SemanticModel): 'NoneType' object has no attribute 'get'
+  ⚠ Report Usage Metrics Model (SemanticModel): 'NoneType' object has no attribute 'get'
+  ⚠ GEN_PBI_AUTOMATE_STRING_TEST (SemanticModel): 'NoneType' object has no attribute 'get'
+  ⚠ GenDWH_GoldDWH_LH (SQLEndpoint): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/e07dd3d7-9b9d-47d7-91d9-4f7942a8bb3b/items/79a54267-aa21-4380-b627-7d7f3038bf18/getDefinition
+  ⚠ GenDWH_PlatinumUnderwriting_DWH (Warehouse): 400 Client Error: Bad Request for url: https://api.fabric.microsoft.com/v1/workspaces/e07dd3d7-9b9d-47d7-91d9-4f7942a8bb3b/items/03cf718e-e32d-47be-a726-56bcb9c8c8ba/getDefinition
+  ✓ GenDWH_GoldDWH_LH (Lakehouse): 3 part(s)
+  ⚠ Export_Large_Dataset_NB (Notebook): 'NoneType' object has no attribute 'get'
+  ⚠ Notebook 1 (Notebook): 'NoneType' object has no attribute 'get'
+
+  Definitions: 74 extracted, 229 unsupported/failed
+
+════════════════════════════════════════════════════════════
+STEP 3 — SCHEMA EXTRACTION
+════════════════════════════════════════════════════════════
+  🏭 Warehouse: StagingWarehouseForDataflows
+    ⚠ Error: [TABLE_OR_VIEW_NOT_FOUND] The table or view `StagingWarehouseForDataflows`.`INFORMATION_SCHEMA`.`TABLES` cannot be found. Verify the spelling and correctness of the schema and catalog.
+If you did not qualify the name with a schema, verify the current_schema() output, or qualify the name with the correct schema and catalog.
+To tolerate the error on drop use DROP VIEW IF EXISTS or DROP TABLE IF EXISTS.; line 1 pos 35;
+'Project ['TABLE_NAME, 'TABLE_TYPE]
++- 'UnresolvedRelation [StagingWarehouseForDataflows, INFORMATION_SCHEMA, TABLES], [], false
+
+    0 object(s)
+  📦 Lakehouse: DEV_DWH_PoC_LKH_Bronze
+    ⚠ Error: [SCHEMA_NOT_FOUND] The schema `default.GenDWH_Dev_WS_D.GenDWH_Documentation_LH.DEV_DWH_PoC_LKH_Bronze` cannot be found. Verify the spelling and correctness of the schema and catalog.
+If you did not qualify the name with a catalog, verify the current_schema() output, or qualify the name with the correct catalog.
+To tolerate the error on drop use DROP SCHEMA IF EXISTS.
+    0 table(s)
+  📦 Lakehouse: DEV_DWH_PoC_LKH_Silver
+    ⚠ Error: [SCHEMA_NOT_FOUND] The schema `default.GenDWH_Dev_WS_D.GenDWH_Documentation_LH.DEV_DWH_PoC_LKH_Silver` cannot be found. Verify the spelling and correctness of the schema and catalog.
+If you did not qualify the name with a catalog, verify the current_schema() output, or qualify the name with the correct catalog.
+To tolerate the error on drop use DROP SCHEMA IF EXISTS.
+    0 table(s)
+  📦 Lakehouse: DEV_DWH_PoC_LKH_Administration
+    ⚠ Error: [SCHEMA_NOT_FOUND] The schema `default.GenDWH_Dev_WS_D.GenDWH_Documentation_LH.DEV_DWH_PoC_LKH_Administration` cannot be found. Verify the spelling and correctness of the schema and catalog.
+If you did not qualify the name with a catalog, verify the current_schema() output, or qualify the name with the correct catalog.
+To tolerate the error on drop use DROP SCHEMA IF EXISTS.
+    0 table(s)
+  📦 Lakehouse: DEV_DWH_PoC_LKH_Gold
+    ⚠ Error: [SCHEMA_NOT_FOUND] The schema `default.GenDWH_Dev_WS_D.GenDWH_Documentation_LH.DEV_DWH_PoC_LKH_Gold` cannot be found. Verify the spelling and correctness of the schema and catalog.
+If you did not qualify the name with a catalog, verify the current_schema() output, or qualify the name with the correct catalog.
+To tolerate the error on drop use DROP SCHEMA IF EXISTS.
+    0 table(s)
+  📦 Lakehouse: StagingLakehouseForDataflows
+    ⚠ Error: [SCHEMA_NOT_FOUND] The schema `default.GenDWH_Dev_WS_D.GenDWH_Documentation_LH.StagingLakehouseForDataflows` cannot be found. Verify the spelling and correctness of the schema and catalog.
+If you did not qualify the name with a catalog, verify the current_schema() output, or qualify the name with the correct catalog.
+To tolerate the error on drop use DROP SCHEMA IF EXISTS.
+    0 table(s)
+  📦 Lakehouse: DEV_DWHProj_Administration
+    ⚠ Error: [SCHEMA_NOT_FOUND] The schema `default.GenDWH_Dev_WS_D.GenDWH_Documentation_LH.DEV_DWHProj_Administration` cannot be found. Verify the spelling and correctness of the schema and catalog.
+If you did not qualify the name with a catalog, verify the current_schema() output, or qualify the name with the correct catalog.
+To tolerate the error on drop use DROP SCHEMA IF EXISTS.
+    0 table(s)
+  📦 Lakehouse: DEV_DWHProj_LH_Bronze
+    ⚠ Error: [SCHEMA_NOT_FOUND] The schema `default.GenDWH_Dev_WS_D.GenDWH_Documentation_LH.DEV_DWHProj_LH_Bronze` cannot be found. Verify the spelling and correctness of the schema and catalog.
+If you did not qualify the name with a catalog, verify the current_schema() output, or qualify the name with the correct catalog.
+To tolerate the error on drop use DROP SCHEMA IF EXISTS.
+    0 table(s)
+  📦 Lakehouse: GenDWH_Administration_LH
+    40 table(s)
+  📦 Lakehouse: GenDWH_Bronze_LH
+Show less

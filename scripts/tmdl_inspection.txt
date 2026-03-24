@@ -1,0 +1,511 @@
+=== ALL SEMANTIC MODELS ===
+  Gen_SM_Written_Premium_v0 | ws=GenDWH_Dev_WS_D | parts=22 | tables=15 | has_relationships=true | has_perspectives=false
+  GEN_SM_Policy | ws=GenDWH_Dev_WS_D | parts=22 | tables=16 | has_relationships=true | has_perspectives=false
+  SM_DWH_Policy_premiums_claims_recourses | ws=GenDWH_Dev_WS_D | parts=12 | tables=6 | has_relationships=true | has_perspectives=false
+  SM Underwriters | ws=GenDWH_Dev_WS_D | parts=28 | tables=22 | has_relationships=true | has_perspectives=false
+  SM_REVENUE_FORECAST | ws=GenDWH_Dev_WS_D | parts=11 | tables=5 | has_relationships=true | has_perspectives=false
+  GEN_PBI_Casco_Report_Import | ws=GenDWH_Dev_WS_D | parts=48 | tables=15 | has_relationships=true | has_perspectives=false
+  SM_Basic_Insurance_Benchmarks | ws=GenDWH_Dev_WS_D | parts=58 | tables=52 | has_relationships=true | has_perspectives=false
+  GEN_PBI_Casco_Report_Import | ws=GenDWH_Underwriting_UWS | parts=47 | tables=15 | has_relationships=true | has_perspectives=false
+  Report Usage Metrics Model | ws=GenDWH_Underwriting_UWS | parts=15 | tables=9 | has_relationships=true | has_perspectives=false
+  GEN_PBI_AUTOMATE_STRING_TEST | ws=GenDWH_Underwriting_UWS | parts=11 | tables=1 | has_relationships=true | has_perspectives=false
+
+=== MODEL DETAIL: Gen_SM_Written_Premium_v0 ===
+Parts: definition.pbism, definition/tables/fact_premiums_written.tmdl, definition/tables/sm_written_premium_type.tmdl, definition/tables/dim_date_pdate_r.tmdl, definition/tables/_Measures.tmdl, definition/tables/dim_date_fact_ifrs.tmdl, definition/tables/BusinessType.tmdl, definition/tables/dim_policy_current.tmdl, definition/tables/dim_written_premium_types_current.tmdl, definition/tables/dim_agents_current.tmdl, definition/tables/dim_insurances_current.tmdl, definition/tables/dim_branches_current.tmdl, definition/tables/dim_branches_hq_current.tmdl, definition/tables/dim_date.tmdl, definition/tables/dim_clients_current.tmdl, definition/tables/dim_clients_current_insured.tmdl, definition/relationships.tmdl, definition/cultures/en-US.tmdl, definition/expressions.tmdl, definition/model.tmdl, definition/database.tmdl, .platform
+Real tables: definition/tables/fact_premiums_written.tmdl, definition/tables/sm_written_premium_type.tmdl, definition/tables/dim_date_pdate_r.tmdl, definition/tables/_Measures.tmdl, definition/tables/dim_date_fact_ifrs.tmdl, definition/tables/BusinessType.tmdl, definition/tables/dim_policy_current.tmdl, definition/tables/dim_written_premium_types_current.tmdl, definition/tables/dim_agents_current.tmdl, definition/tables/dim_insurances_current.tmdl, definition/tables/dim_branches_current.tmdl, definition/tables/dim_branches_hq_current.tmdl, definition/tables/dim_date.tmdl, definition/tables/dim_clients_current.tmdl, definition/tables/dim_clients_current_insured.tmdl
+
+--- definition/tables/fact_premiums_written.tmdl (first 150 lines) ---
+table fact_premiums_written
+	lineageTag: 8148fdf1-8651-4380-a40a-896ca832c52f
+	sourceLineageTag: [dbo].[fact_premiums_written]
+
+	column wpm_sk
+		dataType: int64
+		formatString: 0
+		sourceProviderType: bigint
+		lineageTag: f6aff53e-8d30-4d10-8745-d92082872559
+		sourceLineageTag: wpm_sk
+		summarizeBy: sum
+		sourceColumn: wpm_sk
+
+		annotation SummarizationSetBy = Automatic
+
+	column wpm_akviz_agent_sk
+		dataType: int64
+		isHidden
+		formatString: 0
+		sourceProviderType: bigint
+		lineageTag: 0cbf1d1a-5d73-42b3-8245-b21829aa0da7
+		sourceLineageTag: wpm_akviz_agent_sk
+		summarizeBy: sum
+		sourceColumn: wpm_akviz_agent_sk
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column wpm_akviz_agent_ida
+		dataType: int64
+		isHidden
+		formatString: 0
+		sourceProviderType: int
+		lineageTag: a957f362-2f58-402f-ba9a-080aade7aabe
+		sourceLineageTag: wpm_akviz_agent_ida
+		summarizeBy: sum
+		sourceColumn: wpm_akviz_agent_ida
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column wpm_annex_number
+		dataType: int64
+		formatString: 0
+		sourceProviderType: int
+		lineageTag: dbcde545-126f-41ed-bf4d-787aa3cd9e6a
+		sourceLineageTag: wpm_annex_number
+		summarizeBy: sum
+		sourceColumn: wpm_annex_number
+
+		annotation SummarizationSetBy = Automatic
+
+	column wpm_descript
+		dataType: string
+		sourceProviderType: varchar(8000)
+		lineageTag: ccead77a-29f3-4f26-aa28-a3c95b8f5732
+		sourceLineageTag: wpm_descript
+		summarizeBy: none
+		sourceColumn: wpm_descript
+
+		annotation SummarizationSetBy = Automatic
+
+	column wpm_gf_tax
+		dataType: double
+		sourceProviderType: decimal(19, 4)
+		lineageTag: 845a4064-7d14-404f-8d02-208ee5b96a46
+		sourceLineageTag: wpm_gf_tax
+		summarizeBy: sum
+		sourceColumn: wpm_gf_tax
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column wpm_gf_tax_eur
+		dataType: double
+		sourceProviderType: decimal(19, 4)
+		lineageTag: a7b3c39b-1384-4d8f-bd4d-b65956706b37
+		sourceLineageTag: wpm_gf_tax_eur
+		summarizeBy: sum
+		sourceColumn: wpm_gf_tax_eur
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column wpm_pol_sk
+		dataType: int64
+		formatString: 0
+		sourceProviderType: bigint
+		lineageTag: 718c4c65-0e34-4fa6-b523-5cd59bf9ebc1
+		sourceLineageTag: wpm_pol_sk
+		summarizeBy: sum
+		sourceColumn: wpm_pol_sk
+
+		annotation SummarizationSetBy = Automatic
+
+	column wpm_pol_idp
+		dataType: int64
+		formatString: 0
+		sourceProviderType: int
+		lineageTag: 60102792-2fa9-4781-be6f-c1360d6bf79b
+		sourceLineageTag: wpm_pol_idp
+		summarizeBy: none
+		sourceColumn: wpm_pol_idp
+
+		annotation SummarizationSetBy = Automatic
+
+	column wpm_komis_agent_sk
+		dataType: int64
+		formatString: 0
+		sourceProviderType: bigint
+		lineageTag: 3ba17bed-939e-42c0-bb66-1a1a128357ec
+		sourceLineageTag: wpm_komis_agent_sk
+		summarizeBy: sum
+		sourceColumn: wpm_komis_agent_sk
+
+		annotation SummarizationSetBy = Automatic
+
+	column wpm_komis_agent_ida
+		dataType: int64
+		formatString: 0
+		sourceProviderType: int
+		lineageTag: 3c84f585-6f8a-4ead-943d-3a44bc0688ae
+		sourceLineageTag: wpm_komis_agent_ida
+		summarizeBy: sum
+		sourceColumn: wpm_komis_agent_ida
+
+		annotation SummarizationSetBy = Automatic
+
+	column wpm_nomer
+		dataType: int64
+		formatString: 0
+		sourceProviderType: smallint
+		lineageTag: 6197c454-32e1-4447-a08c-165c82657a38
+		sourceLineageTag: wpm_nomer
+		summarizeBy: sum
+		sourceColumn: wpm_nomer
+
+		annotation SummarizationSetBy = Automatic
+
+	column wpm_parent_premium_number
+		dataType: int64
+		formatString: 0
+		sourceProviderType: int
+		lineageTag: 0a7975bb-a37f-441f-9958-83b9a18a6aa7
+		sourceLineageTag: wpm_parent_premium_number
+		summarizeBy: sum
+... (297 more lines)
+
+--- definition/tables/_Measures.tmdl (first 150 lines) ---
+table _Measures
+	lineageTag: b0fc8595-10f1-4328-8845-3a14dca335b3
+
+	measure Начислена-премия = ```
+			
+			SUM(fact_premiums_written[wpm_zapprem])
+			
+			
+			```
+		lineageTag: 02cb8baf-68b2-4b2f-9c5b-e97b91a96b3a
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	measure Добавъци =
+			
+			VAR MinNomer = MIN(fact_premiums_written[wpm_nomer])           -- минимумът в текущия контекст
+			RETURN
+			IF(MinNomer > 1,
+			    CALCULATE(
+			        SUM('fact_premiums_written'[wpm_zapprem]),
+			        KEEPFILTERS(fact_premiums_written[wpm_nomer] >= MinNomer),
+			        KEEPFILTERS(fact_premiums_written[wpm_wpt_type_id] < 5)
+			    ),
+			        CALCULATE(
+			        SUM('fact_premiums_written'[wpm_zapprem]),
+			        KEEPFILTERS(fact_premiums_written[wpm_nomer] > MinNomer),
+			        KEEPFILTERS(fact_premiums_written[wpm_wpt_type_id] < 5)
+			)
+			)
+		lineageTag: 6752b44d-f82a-489e-a3e7-579d0d4fb2df
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	measure 'Отписана премия' = ```
+			
+			    VAR MinNomer = MIN(fact_premiums_written[wpm_nomer])           -- минимумът в текущия контекст
+			RETURN
+			CALCULATE(
+			    SUM('fact_premiums_written'[wpm_zapprem]),
+			    KEEPFILTERS(fact_premiums_written[wpm_nomer] > MinNomer),
+			    KEEPFILTERS(fact_premiums_written[wpm_wpt_type_id] >= 5)
+			)
+			
+			```
+		lineageTag: 191ac2e0-8d70-4698-ac01-e5edadd6fb31
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	measure Measuress = MIN(fact_premiums_written[wpm_nomer])
+		formatString: 0
+		lineageTag: 54eade52-589c-4882-add0-d5f26fc0cba9
+
+	column Measures
+		isHidden
+		formatString: 0
+		lineageTag: 79134f49-e225-4d23-ae33-6e06d93f7054
+		summarizeBy: sum
+		isNameInferred
+		sourceColumn: [Measures]
+
+		annotation SummarizationSetBy = Automatic
+
+	partition _Measures = calculated
+		mode: import
+		source =
+				
+				DATATABLE(
+				    "Measures", INTEGER,
+				
+				    {
+				        {0}
+				    })
+
+	annotation PBI_Id = 1d25871bdb6044ca926ebf68608ca569
+
+
+
+--- definition/relationships.tmdl (first 60 lines) ---
+relationship 2969de4f-8085-da60-0a7f-e94029720418
+	fromColumn: fact_premiums_written.wpm_zap_date_ifrs_id
+	toColumn: dim_date_fact_ifrs.date_key
+
+relationship 76f6f55e-bf19-8508-1e5f-af5571445580
+	fromColumn: fact_premiums_written.wpm_pol_idp
+	toColumn: dim_policy_current.pol_idp
+
+relationship 70e2d666-fc6e-17ed-2675-0ee36d2bf54d
+	fromColumn: dim_policy_current.pol_p_date_r_id
+	toColumn: dim_date_pdate_r.date_key
+
+relationship 2be17aae-fd06-4f26-1261-840ce848feef
+	fromColumn: dim_policy_current.pol_ins_sk
+	toColumn: dim_insurances_current.ins_sk
+
+relationship 6b36b777-56f1-73c0-d7a7-52b842eeb56b
+	fromColumn: dim_policy_current.pol_idkl_brn_sk
+	toColumn: dim_branches_current.brn_sk
+
+relationship 7d307626-a224-9e51-1367-7a373e0d1e69
+	fromColumn: dim_policy_current.pol_idgp_brn_sk
+	toColumn: dim_branches_hq_current.brn_sk
+
+relationship 35e1a86d-5587-abe5-f65f-cfc759fb1c1d
+	fromColumn: fact_premiums_written.wpm_zap_date_id
+	toColumn: dim_date.date_key
+
+relationship 29d63206-220c-6685-e3e0-a75e849621c5
+	crossFilteringBehavior: bothDirections
+	fromColumn: dim_policy_current.pol_agent_sk
+	toColumn: dim_agents_current.agent_sk
+
+relationship 2c28b5da-7e79-05f2-cc16-7597f8345e61
+	crossFilteringBehavior: bothDirections
+	fromColumn: dim_policy_current.pol_client_sk
+	toColumn: dim_clients_current.client_sk
+
+relationship 8de713ea-b506-751f-5416-062e6eded74a
+	fromColumn: dim_policy_current.pol_zastr_client_sk
+	toColumn: dim_clients_current_insured.client_sk
+
+relationship 48d08fd2-0499-b18d-3b54-dc9a68e03dfb
+	fromColumn: fact_premiums_written.wpm_cat_id
+	toColumn: sm_written_premium_type.cat_id
+
+
+
+(No perspectives.tmdl)
+
+
+=== ALL REPORTS ===
+  GEN_PBI_Written_Premium_v0 | ws=GenDWH_Dev_WS_D | parts=7 | files=definition.pbir, StaticResources/RegisteredResources/Picture17620443986903334.png, StaticResources/RegisteredResources/Picture39798906898847107.png, StaticResources/SharedResources/BaseThemes/CY24SU10.json, StaticResources/SharedResources/BuiltInThemes/AccessibleOrchid.json, report.json, .platform
+  GEN_PBI_Premium_per_clients_v1 | ws=GenDWH_Dev_WS_D | parts=6 | files=definition.pbir, StaticResources/RegisteredResources/Picture16885866443147065.png, StaticResources/RegisteredResources/Picture37500928647194642.png, StaticResources/SharedResources/BaseThemes/CY24SU10.json, report.json, .platform
+  GEN_PBI_Active_policies | ws=GenDWH_Dev_WS_D | parts=6 | files=definition.pbir, StaticResources/RegisteredResources/Picture129601242625158786.png, StaticResources/RegisteredResources/Picture320404783864589326.png, StaticResources/SharedResources/BaseThemes/CY25SU10.json, report.json, .platform
+  GEN_PBI_Forecast_Report | ws=GenDWH_Dev_WS_D | parts=5 | files=definition.pbir, StaticResources/RegisteredResources/Picture129601242625158786.png, StaticResources/SharedResources/BaseThemes/CY25SU10.json, report.json, .platform
+  GEN_PBI_Casco_Report_Import | ws=GenDWH_Dev_WS_D | parts=5 | files=definition.pbir, StaticResources/RegisteredResources/download7711332142110715.png, StaticResources/SharedResources/BaseThemes/CY25SU10.json, report.json, .platform
+  GEN_PBI_Casco_Report_Import | ws=GenDWH_Underwriting_UWS | parts=5 | files=definition.pbir, StaticResources/SharedResources/BaseThemes/CY25SU10.json, StaticResources/RegisteredResources/download7711332142110715.png, report.json, .platform
+  Report Usage Metrics Report | ws=GenDWH_Underwriting_UWS | parts=3 | files=definition.pbir, report.json, .platform
+  GEN_PBI_AUTOMATE_STRING_TEST | ws=GenDWH_Underwriting_UWS | parts=4 | files=definition.pbir, StaticResources/SharedResources/BaseThemes/CY25SU11.json, report.json, .platform
+  GEN_PBI_EXPORT_POC | ws=GenDWH_Underwriting_UWS | parts=75 | files=definition.pbir, StaticResources/SharedResources/BaseThemes/CY25SU12.json, definition/version.json, definition/report.json, definition/reportExtensions.json, definition/pages/pages.json, definition/pages/2489ac36429369dc9cda/page.json, definition/pages/2489ac36429369dc9cda/visuals/c614d0109dded16b0116/visual.json, definition/pages/2489ac36429369dc9cda/visuals/2965d66a53945178db00/visual.json, definition/pages/2489ac36429369dc9cda/visuals/e392db99c56c96d054c3/visual.json, definition/pages/2489ac36429369dc9cda/visuals/7105e72f2f5771c2350a/visual.json, definition/pages/2489ac36429369dc9cda/visuals/f407e1461a44fbc4370d/visual.json, definition/pages/2489ac36429369dc9cda/visuals/fd1cacc6e7080f7ea64e/visual.json, definition/pages/2489ac36429369dc9cda/visuals/b7e37bb077f67b3d03b4/visual.json, definition/pages/2489ac36429369dc9cda/visuals/fe21c438b5f2402902dc/visual.json, definition/pages/2489ac36429369dc9cda/visuals/67dbdbae428a93ad12b2/visual.json, definition/pages/2489ac36429369dc9cda/visuals/c8dae58f8c57c361a59c/visual.json, definition/pages/f1dd8c98d7c3736dd189/page.json, definition/pages/f1dd8c98d7c3736dd189/visuals/d0617947da06625a2ec9/visual.json, definition/pages/f1dd8c98d7c3736dd189/visuals/124a67b8d9b3026451d8/visual.json, definition/pages/f1dd8c98d7c3736dd189/visuals/42a6ed9aa063e2cb0720/visual.json, definition/pages/f1dd8c98d7c3736dd189/visuals/22066cabc710b03d0057/visual.json, definition/pages/f1dd8c98d7c3736dd189/visuals/337820f6623d426e9009/visual.json, definition/pages/f1dd8c98d7c3736dd189/visuals/19252a330c4ca8b9495e/visual.json, definition/pages/f1dd8c98d7c3736dd189/visuals/dc8899ac05ab7b0298d0/visual.json, definition/pages/f1dd8c98d7c3736dd189/visuals/c30952f4eb0231b6971e/visual.json, definition/pages/f1dd8c98d7c3736dd189/visuals/4904fe55c4a141b578e0/visual.json, definition/pages/f1dd8c98d7c3736dd189/visuals/cb610427d835915887e0/visual.json, definition/pages/fd368daea66cac153231/page.json, definition/pages/fd368daea66cac153231/visuals/cad29ab1109290701503/visual.json, definition/pages/fd368daea66cac153231/visuals/57d8bbf653a1bbba493e/visual.json, definition/pages/fd368daea66cac153231/visuals/56be2d681bbb9010681b/visual.json, definition/pages/fd368daea66cac153231/visuals/c1323474b32551931518/visual.json, definition/pages/fd368daea66cac153231/visuals/d3a29102528238982c70/visual.json, definition/pages/fd368daea66cac153231/visuals/efaa16235e402059089a/visual.json, definition/pages/fd368daea66cac153231/visuals/2cc8ab8d9b00526d6ab4/visual.json, definition/pages/fd368daea66cac153231/visuals/c477f71faac7bd970443/visual.json, definition/pages/fd368daea66cac153231/visuals/0deea193430081c3d457/visual.json, definition/pages/fd368daea66cac153231/visuals/dd29ddd34502e3831c21/visual.json, definition/pages/ccc1b5f43ddecc947063/page.json, definition/pages/ccc1b5f43ddecc947063/visuals/28c15745852013ebcaa6/visual.json, definition/pages/ccc1b5f43ddecc947063/visuals/3fdc17a7263206907010/visual.json, definition/pages/ccc1b5f43ddecc947063/visuals/25801310205c33ccc03b/visual.json, definition/pages/ccc1b5f43ddecc947063/visuals/34eeb8d8e0eb08a094c7/visual.json, definition/pages/ccc1b5f43ddecc947063/visuals/d232f3200e1264455eeb/visual.json, definition/pages/ccc1b5f43ddecc947063/visuals/b4328170055d831ae50d/visual.json, definition/pages/ccc1b5f43ddecc947063/visuals/96e7ca3600333767010d/visual.json, definition/pages/ccc1b5f43ddecc947063/visuals/c86ca9b100a83eb54197/visual.json, definition/pages/ccc1b5f43ddecc947063/visuals/e6e682c30ac60398805b/visual.json, definition/pages/ccc1b5f43ddecc947063/visuals/0adf2447baa410508d1b/visual.json, definition/pages/82b1544eb6b2945c953d/page.json, definition/pages/82b1544eb6b2945c953d/visuals/e536329f229c157a0e9d/visual.json, definition/pages/82b1544eb6b2945c953d/visuals/0fde80f6ab3a007dba1b/visual.json, definition/pages/82b1544eb6b2945c953d/visuals/f2cee1cc0ddd0e0500e3/visual.json, definition/pages/82b1544eb6b2945c953d/visuals/e91fdefa2427babaa49a/visual.json, definition/pages/82b1544eb6b2945c953d/visuals/674ac373beae3b301a6b/visual.json, definition/pages/82b1544eb6b2945c953d/visuals/b0b34e868deb8386d881/visual.json, definition/pages/82b1544eb6b2945c953d/visuals/1ea2ebff226d05400338/visual.json, definition/pages/82b1544eb6b2945c953d/visuals/7039426ab9de924a1c07/visual.json, definition/pages/82b1544eb6b2945c953d/visuals/dd6120456301285ca39c/visual.json, definition/pages/82b1544eb6b2945c953d/visuals/913a99d042e1d2b00e98/visual.json, definition/pages/82b1544eb6b2945c953d/visuals/81c7c313bbd8bc50215a/visual.json, definition/pages/d0bf9bd8b971bb6000b6/page.json, definition/pages/d0bf9bd8b971bb6000b6/visuals/da0c9defc0badc095b41/visual.json, definition/pages/d0bf9bd8b971bb6000b6/visuals/0d0420918427030b4e3b/visual.json, definition/pages/d0bf9bd8b971bb6000b6/visuals/09988d34b78ac0961040/visual.json, definition/pages/d0bf9bd8b971bb6000b6/visuals/b820da7d4228db054d41/visual.json, definition/pages/d0bf9bd8b971bb6000b6/visuals/92423ab8307d661d0a36/visual.json, definition/pages/d0bf9bd8b971bb6000b6/visuals/85cabb42701814e35adc/visual.json, definition/pages/d0bf9bd8b971bb6000b6/visuals/9090f0d98cd7055c5a54/visual.json, definition/pages/d0bf9bd8b971bb6000b6/visuals/8ba88f52003505c65013/visual.json, definition/pages/d0bf9bd8b971bb6000b6/visuals/3c96a411be1e8a2cbe40/visual.json, definition/pages/d0bf9bd8b971bb6000b6/visuals/52a0b6363a1a67450c58/visual.json, definition/pages/d0bf9bd8b971bb6000b6/visuals/93c23c4d40947d8648c2/visual.json, .platform
+  GEN_PBI_Premiums_Showcase | ws=GenDWH_Underwriting_UWS | parts=4 | files=definition.pbir, StaticResources/SharedResources/BaseThemes/CY26SU02.json, report.json, .platform
+
+=== REPORT DETAIL: GEN_PBI_Written_Premium_v0 ===
+
+--- definition.pbir ---
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definitionProperties/2.0.0/schema.json",
+  "version": "4.0",
+  "datasetReference": {
+    "byConnection": {
+      "connectionString": "Data Source=powerbi://api.powerbi.com/v1.0/myorg/GenDWH_Dev_WS_D;initial catalog=Gen_SM_Written_Premium_v0;integrated security=ClaimsToken;semanticmodelid=655edf04-2205-4a10-93d4-59430a6244a2"
+    }
+  }
+}
+
+--- report.json top-level keys: config, layoutOptimization, publicCustomVisuals, resourcePackages, sections, theme ---
+Sections: 4
+
+--- First page: "WP by Agent Type" ---
+  Keys: config, displayName, displayOption, filters, height, name, ordinal, visualContainers, width
+  visualContainers: 30
+  PAGE filters: []
+
+  --- Visual #0 ---
+    VC keys: config, height, width, x, y, z
+    config keys: name, layouts, singleVisualGroup
+    visualType: undefined
+    singleVisual keys: 
+
+  --- Visual #1 ---
+    VC keys: config, filters, height, width, x, y, z
+    config keys: name, layouts, singleVisual, parentGroupName
+    visualType: card
+    singleVisual keys: visualType, projections, prototypeQuery, columnProperties, drillFilterOtherVisuals, hasDefaultSort, objects, vcObjects
+    prototypeQuery keys: Version, From, Select, OrderBy
+    prototypeQuery: {"Version":2,"From":[{"Name":"f","Entity":"fact_premiums_written","Type":0}],"Select":[{"Aggregation":{"Expression":{"Column":{"Expression":{"SourceRef":{"Source":"f"}},"Property":"wpm_zap_prem_eur"}},"Function":0},"Name":"Sum(fact_premiums_written.wpm_zap_prem_eur)","NativeReferenceName":"Sum of wpm_zap_prem_eur"}],"OrderBy":[{"Direction":2,"Expression":{"Aggregation":{"Expression":{"Column":{"Expression":{"SourceRef":{"Source":"f"}},"Property":"wpm_zap_prem_eur"}},"Function":0}}}]}
+    vcObjects keys: title, spacing, border, background, dropShadow, visualHeader
+    VISUAL filters: [{"name":"d6b922c46e2ee045be86","expression":{"Column":{"Expression":{"SourceRef":{"Entity":"fact_premiums_written"}},"Property":"wpm_wpt_type_id"}},"filter":{"Version":2,"From":[{"Name":"f","Entity":"fact_premiums_written","Type":0}],"Where":[{"Condition":{"In":{"Expressions":[{"Column":{"Expression":{"SourceRef":{"Source":"f"}},"Property":"wpm_wpt_type_id"}}],"Values":[[{"Literal":{"Value":"5L"}}]]}}}]},"type":"Categorical","howCreated":1,"objects":{"general":[{"properties":{}}]}}]
+
+FOUND: GEN_PBI_EXPORT_POC type=Report id=b80cadfb-9aad-4015-9901-76e6a6534d83
+
+=== PBIP REPORT: GEN_PBI_EXPORT_POC (75 parts) ===
+
+--- definition/pages/2489ac36429369dc9cda/page.json ---
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/page/2.0.0/schema.json",
+  "name": "2489ac36429369dc9cda",
+  "displayName": "Gross_Written_Premiums",
+  "displayOption": "FitToPage",
+  "height": 720,
+  "width": 1280,
+  "filterConfig": {
+    "filters": [
+      {
+        "name": "63fd64774a74bd701068",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "dim_report_filters"
+              }
+            },
+            "Property": "Report_Code"
+          }
+        },
+        "type": "Categorical",
+        "filter": {
+          "Version": 2,
+          "From": [
+            {
+              "Name": "d",
+              "Entity": "dim_report_filters",
+              "Type": 0
+            }
+          ],
+          "Where": [
+            {
+              "Condition": {
+                "In": {
+                  "Expressions": [
+                    {
+                      "Column": {
+                        "Expression": {
+                          "SourceRef": {
+                            "Source": "d"
+                          }
+                        },
+                        "Property": "Report_Code"
+                      }
+                    }
+                  ],
+                  "Values": [
+                    [
+                      {
+                        "Literal": {
+                          "Value": "'R01'"
+                        }
+                      }
+      
+
+--- definition/pages/2489ac36429369dc9cda/visuals/c614d0109dded16b0116/visual.json ---
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.6.0/schema.json",
+  "name": "c614d0109dded16b0116",
+  "position": {
+    "x": 0,
+    "y": 0,
+    "z": 6000,
+    "height": 18.323108384458077,
+    "width": 1280,
+    "tabOrder": 6000
+  },
+  "visual": {
+    "visualType": "shape",
+    "objects": {
+      "shape": [
+        {
+          "properties": {
+            "tileShape": {
+              "expr": {
+                "Literal": {
+                  "Value": "'rectangle'"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "rotation": [
+        {
+          "properties": {
+            "shapeAngle": {
+              "expr": {
+                "Literal": {
+                  "Value": "0L"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "fill": [
+        {
+          "properties": {
+            "fillColor": {
+              "solid": {
+                "color": {
+                  "expr": {
+                    "Literal": {
+                      "Value": "'#CD2727'"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "selector": {
+            "id": "default"
+          }
+        }
+      ],
+      "outline": [
+        {
+          "properties": {
+            "show": {
+              "expr": {
+                "Literal": {
+                  "Value": "false"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "drillFilterOtherVisuals": true
+  },
+  "howCreated": "InsertVisualButton"
+}
+
+--- definition/report.json (first 500 chars) ---
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/report/3.1.0/schema.json",
+  "themeCollection": {
+    "baseTheme": {
+      "name": "CY25SU12",
+      "reportVersionAtImport": {
+        "visual": "2.5.0",
+        "report": "3.1.0",
+        "page": "2.3.0"
+      },
+      "type": "SharedResources"
+    }
+  },
+  "objects": {
+    "section": [
+      {
+        "properties": {
+          "verticalAlignment": {
+            "expr": {
+              "Literal": {
+     

@@ -37,6 +37,11 @@ const CONTAINER = "gendwh-exports";
 const RAW_BLOB = "latest/gendwh_raw_export.json";
 const JSONL_BLOB = "latest/gendwh_knowledge.jsonl";
 const CACHE_BLOB = "latest/analysis_cache.json";
+const VECTORS_BLOB = "latest/gendwh_vectors.jsonl";
+
+const EMBEDDING_MODEL = "text-embedding-ada-002";
+const EMBED_BATCH_SIZE = 20;
+const EMBED_BATCH_DELAY_MS = 500;
 
 const BATCH_SIZE = 5;
 const BATCH_DELAY_MS = 1000;
@@ -44,6 +49,8 @@ const TIMEOUT_MS = 38000; // 38s hard limit — leave 7s margin for cache upload
 
 // ── Shared state (cached per function instance) ─────────────
 let cachedApiKey = null;
+let cachedOpenAIKey = null;
+let cachedOpenAIEndpoint = null;
 
 // ── API Key (reuse pattern from /api/chat) ──────────────────
 async function getApiKey(log) {
@@ -103,6 +110,84 @@ async function downloadJSONSafe(blobPath, fallback, log) {
       return fallback;
     }
     log(`downloadJSONSafe error for ${blobPath}: ${err.message}`);
+    throw err;
+  }
+}
+
+// ── Azure OpenAI credentials ─────────────────────────────────
+async function getOpenAICredentials(log) {
+  if (cachedOpenAIKey && cachedOpenAIEndpoint) return { apiKey: cachedOpenAIKey, endpoint: cachedOpenAIEndpoint };
+  if (process.env.AZURE_OPENAI_KEY && process.env.AZURE_OPENAI_ENDPOINT) {
+    cachedOpenAIKey = process.env.AZURE_OPENAI_KEY;
+    cachedOpenAIEndpoint = process.env.AZURE_OPENAI_ENDPOINT;
+    return { apiKey: cachedOpenAIKey, endpoint: cachedOpenAIEndpoint };
+  }
+  try {
+    const cred = new DefaultAzureCredential();
+    const kv = new SecretClient(KV_URL, cred);
+    if (!cachedOpenAIKey) cachedOpenAIKey = (await kv.getSecret("azure-openai-key")).value;
+    if (!cachedOpenAIEndpoint) cachedOpenAIEndpoint = (await kv.getSecret("azure-openai-endpoint")).value;
+    log("Azure OpenAI credentials loaded from Key Vault.");
+    return { apiKey: cachedOpenAIKey, endpoint: cachedOpenAIEndpoint };
+  } catch (err) {
+    log("Failed to fetch OpenAI credentials from Key Vault:", err.message);
+    return null;
+  }
+}
+
+// ── Embedding helpers ────────────────────────────────────────
+function chunkToText(chunk) {
+  const parts = [];
+  if (chunk.type) parts.push(`type: ${chunk.type}`);
+  if (chunk.id) parts.push(`id: ${chunk.id}`);
+  if (chunk.table) parts.push(`table: ${chunk.table}`);
+  if (chunk.model_name) parts.push(`model: ${chunk.model_name}`);
+  if (chunk.pipeline) parts.push(`pipeline: ${chunk.pipeline}`);
+  if (chunk.report_name) parts.push(`report: ${chunk.report_name}`);
+  if (chunk.layer) parts.push(`layer: ${chunk.layer}`);
+  if (chunk.summary) parts.push(chunk.summary);
+  if (chunk.target_field) parts.push(`field: ${chunk.target_field}`);
+  if (chunk.source_table) parts.push(`source: ${chunk.source_table}.${chunk.source_column || ""}`);
+  if (chunk.expression) parts.push(`expr: ${chunk.expression}`);
+  if (chunk.business_logic) parts.push(chunk.business_logic);
+  if (chunk.definition) parts.push(chunk.definition.slice(0, 2000));
+  if (chunk.description) parts.push(chunk.description);
+  if (chunk.tables_detail) parts.push(JSON.stringify(chunk.tables_detail).slice(0, 3000));
+  if (chunk.measures) parts.push(chunk.measures.map(m => `${m.name}: ${m.expression || ""}`).join("; ").slice(0, 3000));
+  if (chunk.columns) parts.push(chunk.columns.map(c => c.name || c).join(", ").slice(0, 1000));
+  if (chunk.schema && chunk.name) parts.push(`${chunk.schema}.${chunk.name}`);
+  return parts.join("\n") || JSON.stringify(chunk).slice(0, 4000);
+}
+
+function chunkHash(chunk) {
+  const text = chunkToText(chunk);
+  return crypto.createHash("sha256").update(text).digest("hex").slice(0, 16);
+}
+
+async function embedBatch(texts, apiKey, endpoint) {
+  const url = `${endpoint}openai/deployments/${EMBEDDING_MODEL}/embeddings?api-version=2023-05-15`;
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "api-key": apiKey },
+    body: JSON.stringify({ input: texts }),
+  });
+  if (!resp.ok) {
+    const errText = await resp.text().catch(() => "");
+    throw new Error(`Embedding API ${resp.status}: ${errText.slice(0, 300)}`);
+  }
+  const data = await resp.json();
+  return data.data.map(d => d.embedding);
+}
+
+async function downloadTextSafe(container, blobPath) {
+  const blob = container.getBlockBlobClient(blobPath);
+  try {
+    const resp = await blob.download(0);
+    const chunks = [];
+    for await (const c of resp.readableStreamBody) chunks.push(c);
+    return Buffer.concat(chunks).toString("utf8");
+  } catch (err) {
+    if (String(err.statusCode) === "404" || String(err.message).includes("BlobNotFound")) return null;
     throw err;
   }
 }
@@ -534,6 +619,82 @@ module.exports = async function (context, req) {
     const ts = new Date().toISOString().replace(/[:.]/g, "-");
     await uploadBlob(`archive/${ts}_knowledge.jsonl`, jsonl, log);
 
+    // ── Step 8: Embed new/changed chunks ─────────────────────
+    let embeddedCount = 0;
+    let embedSkipped = 0;
+    let embedError = null;
+    try {
+      const openaiCreds = await getOpenAICredentials(log);
+      if (!openaiCreds) throw new Error("Azure OpenAI credentials not available");
+
+      log(`[${elapsed()}s] Step 8: Embedding new/changed chunks...`);
+      const svc = getBlobClient();
+      const containerClient = svc.getContainerClient(CONTAINER);
+
+      // Parse new JSONL into chunks
+      const newChunks = jsonl.split("\n").map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+
+      // Load existing vectors
+      const existingText = await downloadTextSafe(containerClient, VECTORS_BLOB);
+      const existingMap = new Map(); // hash → line
+      if (existingText) {
+        for (const line of existingText.trim().split("\n")) {
+          try { const v = JSON.parse(line); if (v.chunk_hash) existingMap.set(v.chunk_hash, line); } catch {}
+        }
+        log(`  Existing vectors: ${existingMap.size}`);
+      }
+
+      // Find chunks needing embedding
+      const toEmbed = [];
+      const newHashes = new Set();
+      for (const chunk of newChunks) {
+        const hash = chunkHash(chunk);
+        newHashes.add(hash);
+        if (!existingMap.has(hash)) toEmbed.push({ chunk, hash, text: chunkToText(chunk) });
+      }
+      embedSkipped = existingMap.size - toEmbed.length;
+      log(`  Chunks to embed: ${toEmbed.length} (${newChunks.length - toEmbed.length} unchanged)`);
+
+      // Remove vectors for chunks no longer in JSONL
+      const outputLines = [];
+      for (const [hash, line] of existingMap) {
+        if (newHashes.has(hash)) outputLines.push(line);
+      }
+
+      // Embed in batches
+      for (let i = 0; i < toEmbed.length; i += EMBED_BATCH_SIZE) {
+        if (Date.now() - startTime > TIMEOUT_MS - 5000) {
+          log(`  ⏱ Embedding timeout — embedded ${embeddedCount}/${toEmbed.length}`);
+          break;
+        }
+        const batch = toEmbed.slice(i, i + EMBED_BATCH_SIZE);
+        const texts = batch.map(b => b.text.slice(0, 8000));
+        try {
+          const embeddings = await embedBatch(texts, openaiCreds.apiKey, openaiCreds.endpoint);
+          for (let j = 0; j < batch.length; j++) {
+            const { chunk, hash } = batch[j];
+            const vec = { chunk_hash: hash, chunk_type: chunk.type, id: chunk.id || "", embedding: embeddings[j] };
+            for (const k of ["table", "model_name", "pipeline", "report_name", "layer", "target_field", "source_table"]) {
+              if (chunk[k]) vec[k] = chunk[k];
+            }
+            vec.text = batch[j].text;
+            outputLines.push(JSON.stringify(vec));
+          }
+          embeddedCount += batch.length;
+        } catch (err) {
+          log(`  Embed batch error at ${i}: ${err.message}`);
+        }
+        if (i + EMBED_BATCH_SIZE < toEmbed.length) await sleep(EMBED_BATCH_DELAY_MS);
+      }
+
+      // Upload updated vectors
+      log(`[${elapsed()}s] Uploading gendwh_vectors.jsonl (${outputLines.length} vectors)...`);
+      await uploadBlob(VECTORS_BLOB, outputLines.join("\n"), log);
+    } catch (err) {
+      embedError = err.message;
+      log(`[${elapsed()}s] Embedding step failed (non-fatal): ${err.message}`);
+    }
+
     const summary = {
       status: "complete",
       elapsed_seconds: parseFloat(elapsed()),
@@ -546,6 +707,9 @@ module.exports = async function (context, req) {
       warehouse_chunks: warehouseChunks.length,
       jsonl_lines: lineCount,
       jsonl_bytes: jsonl.length,
+      vectors_embedded: embeddedCount,
+      vectors_skipped: embedSkipped,
+      embed_error: embedError,
     };
     log(`[${elapsed()}s] Done!`, JSON.stringify(summary));
 

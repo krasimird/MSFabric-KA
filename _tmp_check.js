@@ -1,364 +1,4 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>GenDWH Knowledge Assistant</title>
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/vis-network@9.1.2/dist/dist/vis-network.min.css" />
-  <script src="kb-cache.js"></script>
-  <script src="ai-analysis.js"></script>
-  <style>
-    /* ── Reset & Base ─────────────────────────────────────────── */
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    :root {
-      --teal: #1C8D7A; --teal-light: #e6f5f2; --teal-dark: #156d5e;
-      --bg: #f3f2f1; --surface: #ffffff; --text: #323130; --text-muted: #605e5c;
-      --border: #edebe9; --user-bg: #e6f5f2; --assistant-bg: #ffffff;
-      --sidebar-w: 280px; --header-h: 56px; --input-h: 72px;
-    }
-    html, body { height: 100%; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: var(--bg); color: var(--text); }
 
-    /* ── Layout ───────────────────────────────────────────────── */
-    .app { display: flex; height: 100vh; overflow: hidden; }
-
-    /* ── Sidebar ──────────────────────────────────────────────── */
-    .sidebar {
-      width: var(--sidebar-w); background: var(--surface); border-right: 1px solid var(--border);
-      display: flex; flex-direction: column; flex-shrink: 0; overflow-y: auto;
-    }
-    .sidebar-header { padding: 16px; border-bottom: 1px solid var(--border); }
-    .sidebar-header h2 { font-size: 14px; color: var(--teal); text-transform: uppercase; letter-spacing: .5px; }
-    .stats-grid { padding: 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-    .stat-card { background: var(--teal-light); border-radius: 8px; padding: 12px; text-align: center; }
-    .stat-card .value { font-size: 22px; font-weight: 700; color: var(--teal); }
-    .stat-card .label { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
-    .sidebar-section { padding: 12px 16px; border-top: 1px solid var(--border); }
-    .sidebar-section h3 { font-size: 12px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 8px; }
-    .quick-btn {
-      display: block; width: 100%; text-align: left; padding: 8px 10px; margin-bottom: 4px;
-      border: 1px solid var(--border); border-radius: 6px; background: var(--surface);
-      cursor: pointer; font-size: 13px; color: var(--text); transition: background .15s;
-    }
-    .quick-btn:hover { background: var(--teal-light); border-color: var(--teal); }
-    .data-status { padding: 12px 16px; font-size: 12px; color: var(--text-muted); border-top: 1px solid var(--border); margin-top: auto; }
-    .data-status .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
-    .dot-ok { background: var(--teal); } .dot-err { background: #d13438; } .dot-loading { background: #f7a93b; }
-
-    /* ── Analysis Progress ───────────────────────────────────── */
-    .analysis-section { padding: 12px 16px; border-top: 1px solid var(--border); }
-    .analysis-section h3 { font-size: 12px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 8px; }
-    .progress-bar { width: 100%; height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; margin: 6px 0; }
-    .progress-fill { height: 100%; background: var(--teal); border-radius: 3px; transition: width .3s; width: 0%; }
-    .analysis-status { font-size: 11px; color: var(--text-muted); }
-    .analysis-btn {
-      display: block; width: 100%; padding: 8px 10px; margin-top: 8px;
-      border: 1px solid var(--teal); border-radius: 6px; background: var(--teal-light);
-      cursor: pointer; font-size: 12px; color: var(--teal); font-weight: 600; transition: background .15s;
-    }
-    .analysis-btn:hover { background: var(--teal); color: #fff; }
-    .analysis-btn:disabled { opacity: .5; cursor: not-allowed; }
-
-    /* ── Prompts Drawer (push pattern) ────────────────────────── */
-    .prompts-drawer-btn {
-      display: block; width: calc(100% - 24px); margin: 8px 12px; padding: 8px 12px;
-      border: 1px solid var(--border); border-radius: 6px; background: var(--teal-light);
-      cursor: pointer; font-size: 13px; font-weight: 600; color: var(--teal);
-      text-align: left; transition: background .15s, border-color .15s;
-    }
-    .prompts-drawer-btn:hover { background: var(--teal); color: #fff; border-color: var(--teal); }
-    .prompts-drawer {
-      width: 0; min-width: 0; overflow: hidden; background: var(--surface);
-      border-right: 1px solid var(--border); display: flex; flex-direction: column;
-      flex-shrink: 0; transition: width 300ms ease, min-width 300ms ease;
-      box-shadow: 2px 0 8px rgba(0,0,0,.08);
-    }
-    .prompts-drawer.open { width: 320px; min-width: 320px; }
-    .drawer-header {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 14px 16px; border-bottom: 1px solid var(--border); flex-shrink: 0;
-    }
-    .drawer-header h3 { font-size: 14px; color: var(--teal); margin: 0; font-weight: 700; }
-    .drawer-close {
-      background: none; border: none; font-size: 18px; cursor: pointer;
-      color: var(--text-muted); padding: 2px 6px; border-radius: 4px; line-height: 1;
-    }
-    .drawer-close:hover { background: var(--border); color: var(--text); }
-    .drawer-body { flex: 1; overflow-y: auto; padding: 8px 0; }
-    /* Accordion */
-    .acc-header {
-      display: flex; align-items: center; gap: 6px; padding: 10px 16px;
-      cursor: pointer; user-select: none; font-size: 13px; font-weight: 600;
-      color: var(--text); border-bottom: 1px solid var(--border); transition: background .12s;
-    }
-    .acc-header:hover { background: var(--teal-light); }
-    .acc-arrow { font-size: 9px; transition: transform .2s; display: inline-block; }
-    .acc-header.open .acc-arrow { transform: rotate(90deg); }
-    .acc-header.open { color: var(--teal); background: var(--teal-light); }
-    .acc-body { display: none; padding: 6px 16px 10px; }
-    .acc-body.open { display: block; }
-    .drawer-prompt {
-      display: flex; align-items: flex-start; gap: 6px; margin-bottom: 6px;
-      font-size: 12.5px; line-height: 1.45; color: var(--text);
-    }
-    .drawer-prompt-text { flex: 1; word-break: break-word; }
-    .prompt-send {
-      flex-shrink: 0; background: none; border: 1px solid var(--border); border-radius: 4px;
-      cursor: pointer; font-size: 11px; padding: 2px 7px; color: var(--text-muted);
-      transition: border-color .15s, color .15s, background .15s; white-space: nowrap;
-    }
-    .prompt-send:hover { border-color: var(--teal); color: var(--teal); background: var(--teal-light); }
-
-    /* ── Main Panel ───────────────────────────────────────────── */
-    .main { flex: 1; display: flex; flex-direction: column; min-width: 0; transition: flex 300ms ease; }
-
-    /* ── Header ───────────────────────────────────────────────── */
-    .header {
-      height: var(--header-h); background: var(--teal); color: #fff;
-      display: flex; align-items: center; padding: 0 20px; flex-shrink: 0;
-    }
-    .header .logo { font-weight: 700; font-size: 18px; }
-    .header .logo span { font-weight: 400; opacity: .8; font-size: 13px; margin-left: 10px; }
-    .menu-toggle {
-      display: none; background: none; border: none; color: #fff; font-size: 22px;
-      cursor: pointer; margin-right: 12px; padding: 4px;
-    }
-
-    /* ── Chat Area ────────────────────────────────────────────── */
-    .chat-area { flex: 1; overflow-y: auto; padding: 20px 24px; display: flex; flex-direction: column; gap: 16px; }
-    .message { max-width: 80%; display: flex; flex-direction: column; }
-    .message.user { align-self: flex-end; }
-    .message.assistant { align-self: flex-start; }
-    .msg-bubble {
-      padding: 12px 16px; border-radius: 12px; font-size: 14px; line-height: 1.6;
-      word-wrap: break-word; overflow-wrap: break-word;
-    }
-    .user .msg-bubble { background: var(--user-bg); border: 1px solid #c4e3dd; border-bottom-right-radius: 4px; }
-    .assistant .msg-bubble { background: var(--assistant-bg); border: 1px solid var(--border); border-bottom-left-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
-    .msg-bubble p { margin-bottom: 8px; } .msg-bubble p:last-child { margin-bottom: 0; }
-    .msg-bubble pre { background: #f6f6f6; padding: 10px 12px; border-radius: 6px; overflow-x: auto; font-size: 13px; margin: 8px 0; }
-    .msg-bubble code { font-family: 'Cascadia Code', Consolas, monospace; font-size: 13px; }
-    .msg-bubble code:not(pre code) { background: #f0f0f0; padding: 1px 5px; border-radius: 3px; }
-    .mermaid-container { margin: 8px 0; padding: 12px; background: #fff; border: 1px solid var(--border); border-radius: 6px; overflow-x: auto; }
-    .mermaid-container svg { max-width: 100%; height: auto; }
-    .msg-bubble table { border-collapse: collapse; margin: 8px 0; font-size: 13px; }
-    .msg-bubble th, .msg-bubble td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; }
-    .msg-bubble th { background: var(--teal-light); font-weight: 600; }
-    .msg-label { font-size: 11px; color: var(--text-muted); margin-bottom: 4px; padding: 0 4px; }
-    .user .msg-label { text-align: right; }
-    .token-info { font-size: 11px; color: var(--text-muted); margin-top: 4px; padding: 0 4px; display: flex; gap: 10px; align-items: center; }
-    .token-info span { opacity: .75; }
-    .token-info .cost { color: var(--teal); font-weight: 600; opacity: 1; }
-    .usage-section { padding: 10px 16px; border-top: 1px solid var(--border); }
-    .usage-section h3 { font-size: 12px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 6px; }
-    .usage-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-    .usage-card { background: var(--teal-light); border-radius: 6px; padding: 8px; text-align: center; }
-    .usage-card .uval { font-size: 16px; font-weight: 700; color: var(--teal); }
-    .usage-card .ulbl { font-size: 10px; color: var(--text-muted); }
-    .usage-history { margin-top: 8px; font-size: 11px; color: var(--text-muted); max-height: 100px; overflow-y: auto; }
-    .usage-history table { width: 100%; border-collapse: collapse; }
-    .usage-history th, .usage-history td { padding: 2px 4px; text-align: right; border-bottom: 1px solid var(--border); }
-    .usage-history th { text-align: left; font-weight: 600; }
-    .welcome { text-align: center; color: var(--text-muted); margin: auto; max-width: 500px; }
-    .welcome h2 { color: var(--teal); margin-bottom: 8px; }
-
-    /* ── Spinner ──────────────────────────────────────────────── */
-    .spinner-wrap { align-self: flex-start; display: flex; align-items: center; gap: 8px; color: var(--text-muted); font-size: 13px; }
-    .spinner { width: 20px; height: 20px; border: 3px solid var(--border); border-top-color: var(--teal); border-radius: 50%; animation: spin .8s linear infinite; }
-    @keyframes spin { to { transform: rotate(360deg); } }
-
-    /* ── Input Area ───────────────────────────────────────────── */
-    .input-area {
-      padding: 12px 20px; border-top: 1px solid var(--border); background: var(--surface);
-      display: flex; gap: 10px; align-items: flex-end; flex-shrink: 0;
-    }
-    .input-area textarea {
-      flex: 1; resize: none; border: 1px solid var(--border); border-radius: 8px;
-      padding: 10px 14px; font-family: inherit; font-size: 14px; line-height: 1.5;
-      min-height: 44px; max-height: 120px; outline: none; transition: border-color .15s;
-    }
-    .input-area textarea:focus { border-color: var(--teal); }
-    .send-btn {
-      background: var(--teal); color: #fff; border: none; border-radius: 8px;
-      padding: 10px 20px; font-size: 14px; font-weight: 600; cursor: pointer;
-      transition: background .15s; height: 44px;
-    }
-    .send-btn:hover { background: var(--teal-dark); }
-    .send-btn:disabled { opacity: .5; cursor: not-allowed; }
-
-    
-    /* ── Pipeline Vis.js Graph ────────────────────────────────── */
-    .pipeline-graph-wrap {
-      margin: 10px 0; border: 1px solid var(--border); border-radius: 8px;
-      background: #fafbfc; overflow: hidden;
-    }
-    .pipeline-graph-toolbar {
-      display: flex; justify-content: space-between; align-items: center;
-      padding: 6px 12px; background: var(--teal); color: #fff; font-size: 13px; font-weight: 600;
-    }
-    .pipeline-graph-toolbar button {
-      background: none; border: 1px solid rgba(255,255,255,.4); color: #fff; border-radius: 4px;
-      padding: 2px 10px; cursor: pointer; font-size: 12px;
-    }
-    .pipeline-graph-toolbar button:hover { background: rgba(255,255,255,.15); }
-    .pipeline-graph-container { width: 100%; height: 600px; }
-    .pipeline-graph-wrap.fullscreen {
-      position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-      z-index: 9999; background: #fff; border-radius: 0; margin: 0; border: none;
-    }
-    .pipeline-graph-wrap.fullscreen .pipeline-graph-container { height: calc(100vh - 40px); }
-    .pipeline-node-popup {
-      position: absolute; background: #fff; border: 1px solid var(--border); border-radius: 8px;
-      box-shadow: 0 4px 16px rgba(0,0,0,.12); padding: 12px 16px; max-width: 380px;
-      font-size: 12px; z-index: 50; line-height: 1.5;
-    }
-    .pipeline-node-popup h4 { margin: 0 0 6px; color: var(--teal); font-size: 14px; }
-    .pipeline-node-popup pre { background: #f6f6f6; padding: 6px 8px; border-radius: 4px; overflow-x: auto; font-size: 11px; margin: 4px 0; white-space: pre-wrap; }
-    .pipeline-node-popup .close-popup { float: right; cursor: pointer; color: var(--text-muted); font-size: 16px; line-height: 1; }
-
-    /* ── Mobile ───────────────────────────────────────────────── */
-    @media (max-width: 768px) {
-      .sidebar { position: fixed; left: -300px; top: 0; bottom: 0; z-index: 100; transition: left .25s; box-shadow: 2px 0 12px rgba(0,0,0,.15); }
-      .sidebar.open { left: 0; }
-      .menu-toggle { display: block; }
-      .message { max-width: 95%; }
-      .prompts-drawer { display: none; }
-    }
-  </style>
-</head>
-<body>
-<div class="app">
-  <!-- Sidebar -->
-  <aside class="sidebar" id="sidebar">
-    <div class="sidebar-header"><h2>📊 Platform Stats</h2></div>
-    <div class="stats-grid" id="statsGrid">
-      <div class="stat-card"><div class="value" id="statWorkspaces">–</div><div class="label">Workspaces</div></div>
-      <div class="stat-card"><div class="value" id="statItems">–</div><div class="label">Items</div></div>
-      <div class="stat-card"><div class="value" id="statTables">–</div><div class="label">Tables</div></div>
-      <div class="stat-card"><div class="value" id="statColumns">–</div><div class="label">Columns</div></div>
-      <div class="stat-card"><div class="value" id="statPipelines">–</div><div class="label">Pipelines</div></div>
-      <div class="stat-card"><div class="value" id="statDefinitions">–</div><div class="label">Definitions</div></div>
-    </div>
-    <div class="sidebar-section">
-      <h3>Quick Questions</h3>
-      <button class="quick-btn" data-q="What tables are in the platform and how are they organized?">📋 Platform overview</button>
-      <button class="quick-btn" data-q="Show me all pipelines and their activities">🔄 Pipeline summary</button>
-      <button class="quick-btn" data-q="What stored procedures exist in the warehouses?">🏭 Warehouse procedures</button>
-      <button class="quick-btn" data-q="Генерирай Data Lineage Excel">📥 Generate Data Lineage Excel</button>
-      <button class="quick-btn" data-q="Генерирай Data Dictionary Excel">📥 Generate Data Dictionary</button>
-      <button class="quick-btn" data-q="Генерирай Business Glossary">📥 Generate Business Glossary</button>
-    </div>
-    <div class="analysis-section" id="analysisSection" style="display:none;">
-      <h3>🧠 AI Analysis</h3>
-      <div class="progress-bar"><div class="progress-fill" id="analysisProgress"></div></div>
-      <div class="analysis-status" id="analysisStatus">Ready</div>
-    </div>
-    <div class="usage-section" id="usageSection">
-      <h3>💰 API Usage (Today)</h3>
-      <div class="usage-grid">
-        <div class="usage-card"><div class="uval" id="uQueries">0</div><div class="ulbl">Queries</div></div>
-        <div class="usage-card"><div class="uval" id="uCost">$0.00</div><div class="ulbl">Cost</div></div>
-        <div class="usage-card"><div class="uval" id="uInput">0</div><div class="ulbl">Input tokens</div></div>
-        <div class="usage-card"><div class="uval" id="uOutput">0</div><div class="ulbl">Output tokens</div></div>
-      </div>
-      <div class="usage-history" id="usageHistory"></div>
-    </div>
-    <button class="prompts-drawer-btn" id="promptsDrawerBtn">📋 Примерни промптове →</button>
-    <div class="data-status" id="dataStatus"><span class="dot dot-loading"></span> Loading data…</div>
-    <div style="padding:6px 16px 10px;border-top:1px solid var(--border);margin-top:auto;">
-      <button id="analyzeBtn" onclick="startAnalysis()" style="background:none;border:none;color:var(--text-muted);font-size:11px;cursor:pointer;padding:2px 0;opacity:.7;transition:opacity .15s;" onmouseenter="this.style.opacity='1'" onmouseleave="this.style.opacity='.7'" title="Re-analyze knowledge base on server">🔄 Re-analyze knowledge base</button>
-    </div>
-  </aside>
-
-  <!-- Prompts Drawer (push pattern) -->
-  <div class="prompts-drawer" id="promptsDrawer">
-    <div class="drawer-header">
-      <h3>📋 Примерни промптове</h3>
-      <button class="drawer-close" id="drawerClose" title="Затвори">✕</button>
-    </div>
-    <div class="drawer-body">
-      <div class="acc-section">
-        <div class="acc-header" data-acc="lineage"><span class="acc-arrow">▸</span> 🔍 Lineage &amp; полета</div>
-        <div class="acc-body" data-acc-body="lineage">
-          <div class="drawer-prompt"><span class="drawer-prompt-text">Откъде идва полето suma в stg_claim_expenses?</span><button class="prompt-send">→ Изпрати</button></div>
-          <div class="drawer-prompt"><span class="drawer-prompt-text">Как се изчислява cat_id в stg_claim_expenses?</span><button class="prompt-send">→ Изпрати</button></div>
-          <div class="drawer-prompt"><span class="drawer-prompt-text">Покажи пълния lineage на fact_premiums_written</span><button class="prompt-send">→ Изпрати</button></div>
-          <div class="drawer-prompt"><span class="drawer-prompt-text">Кои source полета захранват fact_claims_paid.cp_suma?</span><button class="prompt-send">→ Изпрати</button></div>
-          <div class="drawer-prompt"><span class="drawer-prompt-text">Как се попълва pol_sk в dim_claims — от кой join идва?</span><button class="prompt-send">→ Изпрати</button></div>
-          <div class="drawer-prompt"><span class="drawer-prompt-text">Защо полето има стойност -1 в определени редове?</span><button class="prompt-send">→ Изпрати</button></div>
-        </div>
-      </div>
-      <div class="acc-section">
-        <div class="acc-header" data-acc="tables"><span class="acc-arrow">▸</span> 📋 Таблици &amp; схеми</div>
-        <div class="acc-body" data-acc-body="tables">
-          <div class="drawer-prompt"><span class="drawer-prompt-text">Какви полета има dim_policy?</span><button class="prompt-send">→ Изпрати</button></div>
-          <div class="drawer-prompt"><span class="drawer-prompt-text">Кои таблици захранват Gold слоя?</span><button class="prompt-send">→ Изпрати</button></div>
-          <div class="drawer-prompt"><span class="drawer-prompt-text">Какви таблици има в Silver Staging?</span><button class="prompt-send">→ Изпрати</button></div>
-          <div class="drawer-prompt"><span class="drawer-prompt-text">Какви са разликите между Silver Raw и Silver Staging?</span><button class="prompt-send">→ Изпрати</button></div>
-          <div class="drawer-prompt"><span class="drawer-prompt-text">Колко реда има fact_premiums_written?</span><button class="prompt-send">→ Изпрати</button></div>
-          <div class="drawer-prompt"><span class="drawer-prompt-text">Кои таблици имат SCD2 логика?</span><button class="prompt-send">→ Изпрати</button></div>
-        </div>
-      </div>
-      <div class="acc-section">
-        <div class="acc-header" data-acc="pipelines"><span class="acc-arrow">▸</span> ⚙️ Pipelines &amp; оркестрация</div>
-        <div class="acc-body" data-acc-body="pipelines">
-          <div class="drawer-prompt"><span class="drawer-prompt-text">Обясни pipeline GenDWH_Orchestration_DP</span><button class="prompt-send">→ Изпрати</button></div>
-          <div class="drawer-prompt"><span class="drawer-prompt-text">Какви activities има в Bronze фазата на pipeline-а?</span><button class="prompt-send">→ Изпрати</button></div>
-          <div class="drawer-prompt"><span class="drawer-prompt-text">Как се параметризира GenDWH_Orchestrator_NB?</span><button class="prompt-send">→ Изпрати</button></div>
-          <div class="drawer-prompt"><span class="drawer-prompt-text">В какъв ред се изпълняват Silver L1 и L2?</span><button class="prompt-send">→ Изпрати</button></div>
-          <div class="drawer-prompt"><span class="drawer-prompt-text">Какво се случва ако Landing Zone провали?</span><button class="prompt-send">→ Изпрати</button></div>
-          <div class="drawer-prompt"><span class="drawer-prompt-text">Как работи retry логиката в pipeline-а?</span><button class="prompt-send">→ Изпрати</button></div>
-        </div>
-      </div>
-      <div class="acc-section">
-        <div class="acc-header" data-acc="impact"><span class="acc-arrow">▸</span> 💥 Impact analysis</div>
-        <div class="acc-body" data-acc-body="impact">
-          <div class="drawer-prompt"><span class="drawer-prompt-text">Ако променя fact_premiums_written, кои reports ще бъдат засегнати?</span><button class="prompt-send">→ Изпрати</button></div>
-          <div class="drawer-prompt"><span class="drawer-prompt-text">Кои обекти зависят от dim_policy?</span><button class="prompt-send">→ Изпрати</button></div>
-          <div class="drawer-prompt"><span class="drawer-prompt-text">Ако добавя ново поле в stg_claim_expenses, какво трябва да обновя надолу по веригата?</span><button class="prompt-send">→ Изпрати</button></div>
-          <div class="drawer-prompt"><span class="drawer-prompt-text">Кои таблици се презареждат при промяна на Bronze schema?</span><button class="prompt-send">→ Изпрати</button></div>
-          <div class="drawer-prompt"><span class="drawer-prompt-text">Ако Bronze таблица landing_payments_liquidationcosts смени тип на колона, какъв е impact-ът?</span><button class="prompt-send">→ Изпрати</button></div>
-        </div>
-      </div>
-      <div class="acc-section">
-        <div class="acc-header" data-acc="docs"><span class="acc-arrow">▸</span> 📄 Генериране на документи</div>
-        <div class="acc-body" data-acc-body="docs">
-          <div class="drawer-prompt"><span class="drawer-prompt-text">Генерирай Data Lineage Excel</span><button class="prompt-send">→ Изпрати</button></div>
-          <div class="drawer-prompt"><span class="drawer-prompt-text">Генерирай Data Dictionary</span><button class="prompt-send">→ Изпрати</button></div>
-          <div class="drawer-prompt"><span class="drawer-prompt-text">Генерирай Business Glossary</span><button class="prompt-send">→ Изпрати</button></div>
-          <div class="drawer-prompt"><span class="drawer-prompt-text">Направи ми справка за всички таблици в Gold слоя</span><button class="prompt-send">→ Изпрати</button></div>
-          <div class="drawer-prompt"><span class="drawer-prompt-text">Направи ми справка за всички таблици които консумират dim_policy</span><button class="prompt-send">→ Изпрати</button></div>
-          <div class="drawer-prompt"><span class="drawer-prompt-text">Направи ми справка за всички fact таблици с техните source таблици</span><button class="prompt-send">→ Изпрати</button></div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Main -->
-  <div class="main">
-    <header class="header">
-      <button class="menu-toggle" id="menuToggle">☰</button>
-      <div class="logo">GenDWH Knowledge Assistant <span>powered by Claude</span></div>
-    </header>
-
-    <div class="chat-area" id="chatArea">
-      <div class="welcome">
-        <h2>👋 Welcome</h2>
-        <p>Ask anything about the GenDWH Data Warehouse platform — tables, pipelines, lineage, schemas, notebooks, and more.</p>
-        <p style="margin-top:12px;font-size:13px;">Data is loaded from the latest extraction export. Try a quick question from the sidebar or type your own below.</p>
-      </div>
-    </div>
-
-    <div class="input-area">
-      <textarea id="userInput" placeholder="Ask about your data warehouse… (Enter to send, Shift+Enter for new line)" rows="1"></textarea>
-      <button class="send-btn" id="sendBtn">Send</button>
-    </div>
-  </div>
-</div>
-
-<script>
 // ── Mermaid init (startOnLoad: false — we render manually after each message) ──
 mermaid.initialize({ startOnLoad: false, theme: 'default', securityLevel: 'loose' });
 
@@ -378,61 +18,7 @@ const MAX_HISTORY = 10;  // Last N messages sent as context
 const kbCache = new KBCache();
 let aiAnalysis = null;
 let analysisReady = false; // true when JSONL knowledge or IndexedDB has lineage data
-
-
-// ── Token Usage Tracking ─────────────────────────────────────
-const PRICE_INPUT  = 3  / 1_000_000;  // $3 per 1M input tokens
-const PRICE_OUTPUT = 15 / 1_000_000;  // $15 per 1M output tokens
-const USAGE_STORAGE_KEY = 'ka_usage_daily';
-
-function getTodayKey() { return new Date().toISOString().slice(0, 10); }
-
-function loadUsageData() {
-  try { return JSON.parse(localStorage.getItem(USAGE_STORAGE_KEY) || '{}'); } catch { return {}; }
-}
-
-function recordUsage(inputTokens, outputTokens) {
-  const data = loadUsageData();
-  const key = getTodayKey();
-  if (!data[key]) data[key] = { queries: 0, input: 0, output: 0, cost: 0 };
-  const cost = inputTokens * PRICE_INPUT + outputTokens * PRICE_OUTPUT;
-  data[key].queries += 1;
-  data[key].input += inputTokens;
-  data[key].output += outputTokens;
-  data[key].cost += cost;
-  // Keep last 30 days only
-  const keys = Object.keys(data).sort();
-  while (keys.length > 30) { delete data[keys.shift()]; }
-  localStorage.setItem(USAGE_STORAGE_KEY, JSON.stringify(data));
-  updateUsageSummary();
-  return { inputTokens, outputTokens, cost };
-}
-
-function formatTokens(n) {
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
-  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
-  return String(n);
-}
-
-function updateUsageSummary() {
-  const data = loadUsageData();
-  const today = data[getTodayKey()] || { queries: 0, input: 0, output: 0, cost: 0 };
-  document.getElementById('uQueries').textContent = today.queries;
-  document.getElementById('uCost').textContent = '$' + today.cost.toFixed(2);
-  document.getElementById('uInput').textContent = formatTokens(today.input);
-  document.getElementById('uOutput').textContent = formatTokens(today.output);
-  // History table (last 7 days)
-  const keys = Object.keys(data).sort().reverse().slice(0, 7);
-  if (keys.length > 0) {
-    let html = '<table><tr><th>Date</th><th>Q</th><th>Cost</th></tr>';
-    for (const k of keys) {
-      const d = data[k];
-      html += `<tr><td style="text-align:left">${k.slice(5)}</td><td>${d.queries}</td><td>$${d.cost.toFixed(2)}</td></tr>`;
-    }
-    html += '</table>';
-    document.getElementById('usageHistory').innerHTML = html;
-  }
-}
+let PIPELINE_INDEX = {};  // pipeline name/activity name → pipeline item name (built on load)
 
 // ── DOM refs ───────────────────────────────────────────────────
 const chatArea  = document.getElementById('chatArea');
@@ -467,6 +53,7 @@ async function loadData() {
           try { return JSON.parse(line); } catch { return null; }
         }).filter(Boolean);
         analysisReady = true;
+        buildPipelineIndex();
         buildReportChunksClientSide();
         buildSemanticModelChunks();
         buildCrossReferences();
@@ -584,6 +171,7 @@ async function startAnalysis() {
     }
 
     analysisReady = true;
+    buildPipelineIndex();
     buildReportChunksClientSide();
     buildSemanticModelChunks();
     buildCrossReferences();
@@ -608,6 +196,45 @@ function getPipelineContent(itemId) {
   return pipelinePart ? (pipelinePart.payload || null) : null;
 }
 
+// ── Pipeline index: map pipeline/activity names → pipeline item name ──
+function buildPipelineIndex() {
+  PIPELINE_INDEX = {};
+  if (!KB || !KB.workspaces) return;
+  for (const ws of KB.workspaces) {
+    for (const item of (ws.items || [])) {
+      if (item.type !== 'DataPipeline') continue;
+      const pName = (item.displayName || item.name || '').toLowerCase();
+      if (pName) PIPELINE_INDEX[pName] = pName;
+      // Look up definition from KB.definitions (NOT item.definition)
+      const def = getPipelineContent(item.id);
+      if (!def) continue;
+      // Match "name":"ActivityName" patterns in pipeline JSON
+      const activityMatches = def.match(/"name"\s*:\s*"([^"]+)"/gi) || [];
+      for (const m of activityMatches) {
+        const nameMatch = m.match(/"name"\s*:\s*"([^"]+)"/i);
+        if (nameMatch) {
+          const actName = nameMatch[1].toLowerCase();
+          if (actName.length > 2 && !['true','false','string','int','bool'].includes(actName)) {
+            PIPELINE_INDEX[actName] = pName;
+          }
+        }
+      }
+      // Also index notebook references found in pipeline definition
+      const nbMatches = def.match(/Phase_\d+_\w+|GenDWH_\w+/gi) || [];
+      for (const nb of nbMatches) PIPELINE_INDEX[nb.toLowerCase()] = pName;
+    }
+  }
+  // Also index execution_chain chunks from KNOWLEDGE
+  for (const chunk of KNOWLEDGE) {
+    if (chunk.type !== 'execution_chain') continue;
+    const pName = (chunk.pipeline || '').toLowerCase();
+    if (pName) PIPELINE_INDEX[pName] = pName;
+    for (const nb of (chunk.notebooks || [])) {
+      if (nb) PIPELINE_INDEX[nb.toLowerCase()] = pName;
+    }
+  }
+  console.log(`[PIPELINE_INDEX] Built index with ${Object.keys(PIPELINE_INDEX).length} entries`);
+}
 
 // ── Client-side report chunk generation ──────────────────────
 // ── Client-side report chunk generation (v2 — supports report.json + PBIP) ──
@@ -853,14 +480,6 @@ function _extractFieldRefs(node, sourceMap, out) {
   for (const v of Object.values(node)) _extractFieldRefs(v, sourceMap, out);
 }
 
-function _formatSemanticModelMeasureBlock(measure) {
-  let s = `measure ${measure.name} = ${measure.expression}`;
-  if (measure.formatString) s += `\n  formatString: ${measure.formatString}`;
-  if (measure.description) s += `\n  description: ${measure.description}`;
-  if (measure.displayFolder) s += `\n  displayFolder: ${measure.displayFolder}`;
-  return s;
-}
-
 // ── Client-side semantic model chunk generation (v2 — full TMDL extraction) ──
 function buildSemanticModelChunks() {
   if (!KB || !KB.workspaces || !KB.definitions) return;
@@ -877,9 +496,8 @@ function buildSemanticModelChunks() {
       modelCount++;
 
       // ── Parse all TMDL files ──
-      const tablesMap = {};   // tableName → { columns:[], measures:[], hierarchies:[], isCalculated, description, mode, ... }
+      const tablesMap = {};   // tableName → { columns:[], measures:[], partitions:[], isCalculated }
       let relationships = [];
-      let perspectives = [];  // [{name, tables:[{table, measures:[], columns:[], hierarchies:[]}]}]
 
       for (const part of defParts) {
         const p = part.path || '';
@@ -898,12 +516,6 @@ function buildSemanticModelChunks() {
         if (p.endsWith('relationships.tmdl')) {
           relationships = _parseTmdlRelationships(payload);
         }
-
-        // ── Parse perspectives ──
-        if (p.startsWith('definition/perspectives/') && p.endsWith('.tmdl')) {
-          const persp = _parseTmdlPerspective(payload);
-          if (persp) perspectives.push(persp);
-        }
       }
 
       const tableNames = Object.keys(tablesMap);
@@ -918,130 +530,55 @@ function buildSemanticModelChunks() {
 
       // Per-model debug logging
       const totalCols = Object.values(tablesMap).reduce((s, t) => s + t.columns.length, 0);
-      const totalHierarchies = Object.values(tablesMap).reduce((s, t) => s + (t.hierarchies || []).length, 0);
-      const calcCols = Object.values(tablesMap).reduce((s, t) => s + t.columns.filter(c => c.isCalculatedColumn).length, 0);
-      console.log(`[SM] ${modelName}: ${tableNames.length} tables, ${totalCols} cols (${calcCols} calc), ${allMeasures.length} measures, ${relationships.length} rels, ${totalHierarchies} hierarchies, ${perspectives.length} perspectives`);
+      console.log(`[SM] ${modelName}: ${tableNames.length} tables, ${totalCols} cols, ${allMeasures.length} measures, ${relationships.length} rels`);
 
       // ── semantic_model_overview chunk (enriched) ──
       const tablesSummary = tableNames.map(t => {
         const info = tablesMap[t];
         const colCount = info.columns.length;
         const measCount = info.measures.length;
-        const hierCount = (info.hierarchies || []).length;
-        const calcCount = info.columns.filter(c => c.isCalculatedColumn).length;
         let desc = `${t} (${colCount} cols`;
-        if (calcCount > 0) desc += `, ${calcCount} calculated`;
         if (measCount > 0) desc += `, ${measCount} measures`;
-        if (hierCount > 0) desc += `, ${hierCount} hierarchies`;
-        if (info.isCalculated) desc += ', calc-table';
-        if (info.mode) desc += `, ${info.mode}`;
-        if (info.description) desc += ` — ${info.description}`;
+        if (info.isCalculated) desc += ', calculated';
         desc += ')';
         return desc;
       });
-      const overviewTextParts = [
+      const overviewText = [
         `Semantic Model: ${modelName}`,
         `Workspace: ${wsName}`,
         `Tables (${tableNames.length}): ${tablesSummary.join('; ')}`,
-        `Total columns: ${totalCols}` + (calcCols > 0 ? ` (${calcCols} calculated)` : ''),
+        `Total columns: ${totalCols}`,
         `Total measures: ${allMeasures.length}`,
         `Relationships: ${relationships.length}`,
-      ];
-      if (totalHierarchies > 0) overviewTextParts.push(`Hierarchies: ${totalHierarchies}`);
-      if (perspectives.length > 0) overviewTextParts.push(`Perspectives (${perspectives.length}): ${perspectives.map(p => p.name).join(', ')}`);
-      const overviewText = overviewTextParts.join('\n');
+      ].join('\n');
 
       KNOWLEDGE.push({
         type: 'semantic_model_overview', id: modelName,
         model_name: modelName, model_id: item.id, workspace: wsName,
         table_count: tableNames.length, measure_count: allMeasures.length,
         column_count: totalCols, relationship_count: relationships.length,
-        hierarchy_count: totalHierarchies, perspective_count: perspectives.length,
-        calculated_column_count: calcCols,
         tables: tableNames,
         tables_detail: Object.fromEntries(Object.entries(tablesMap).map(([k, v]) => [k, {
           columns: v.columns, measure_count: v.measures.length, isCalculated: v.isCalculated,
-          hierarchies: v.hierarchies || [], description: v.description || '', mode: v.mode || '',
         }])),
-        perspectives: perspectives.length > 0 ? perspectives : undefined,
         text: overviewText,
       });
       chunkCount++;
 
-      // ── semantic_model_measures chunks (split large tables into parts) ──
+      // ── semantic_model_measures chunks (one per table with measures) ──
       for (const [tblName, measures] of Object.entries(measuresPerTable)) {
-        const MAX_MEASURE_CHUNK_CHARS = 3500;
-        const prefix = `Semantic Model: ${modelName}\nTable: ${tblName}\n`;
-        const parts = []; // each part: { measures:[], text:'' }
-        let curMeasures = [], curBlocks = [], curLen = prefix.length;
-
-        const flush = () => {
-          if (curMeasures.length === 0) return;
-          parts.push({
-            measures: curMeasures,
-            text: prefix + curBlocks.join('\n\n'),
-          });
-          curMeasures = []; curBlocks = []; curLen = prefix.length;
-        };
-
-        for (const m of measures) {
-          const block = _formatSemanticModelMeasureBlock(m);
-          const extra = (curBlocks.length > 0 ? 2 : 0) + block.length;
-          if (curBlocks.length > 0 && curLen + extra > MAX_MEASURE_CHUNK_CHARS) flush();
-          curMeasures.push(m);
-          curBlocks.push(block);
-          curLen += (curBlocks.length > 1 ? 2 : 0) + block.length;
-        }
-        flush();
-
-        for (let pi = 0; pi < parts.length; pi++) {
-          const partId = parts.length > 1 ? `${modelName}::${tblName}::part${pi + 1}` : `${modelName}::${tblName}`;
-          KNOWLEDGE.push({
-            type: 'semantic_model_measures', id: partId,
-            model_name: modelName, model_id: item.id, table_name: tblName,
-            measures: parts[pi].measures,
-            text: parts[pi].text,
-            part_no: pi + 1, part_count: parts.length,
-          });
-          chunkCount++;
-        }
-      }
-
-      // ── semantic_model_table chunks (per-table detail with columns + hierarchies) ──
-      for (const [tblName, info] of Object.entries(tablesMap)) {
-        if (info.columns.length === 0 && (info.hierarchies || []).length === 0) continue;
-        const colLines = info.columns.map(c => {
-          let s = `  ${c.name}: ${c.dataType || '?'}`;
-          if (c.isCalculatedColumn) s += ' [CALCULATED]';
-          if (c.isHidden) s += ' [hidden]';
-          if (c.formatString) s += ` fmt=${c.formatString}`;
-          if (c.sortByColumn) s += ` sortBy=${c.sortByColumn}`;
-          if (c.description) s += ` — ${c.description}`;
-          if (c.displayFolder) s += ` folder=${c.displayFolder}`;
+        const measText = measures.map(m => {
+          let s = `measure ${m.name} = ${m.expression}`;
+          if (m.formatString) s += `\n  formatString: ${m.formatString}`;
+          if (m.description) s += `\n  description: ${m.description}`;
+          if (m.displayFolder) s += `\n  displayFolder: ${m.displayFolder}`;
           return s;
-        });
-        const hierLines = (info.hierarchies || []).map(h => {
-          const levels = h.levels.map(l => `${l.name}(${l.column})`).join(' → ');
-          return `  hierarchy ${h.name}: ${levels}`;
-        });
-        const textParts = [`Semantic Model: ${modelName}`, `Table: ${tblName}`];
-        if (info.description) textParts.push(`Description: ${info.description}`);
-        if (info.mode) textParts.push(`Mode: ${info.mode}`);
-        if (info.isCalculated) textParts.push('Type: Calculated table');
-        if (info.sourceLineageTag) textParts.push(`Source: ${info.sourceLineageTag}`);
-        textParts.push(`Columns (${info.columns.length}):`);
-        textParts.push(...colLines);
-        if (hierLines.length > 0) {
-          textParts.push(`Hierarchies (${hierLines.length}):`);
-          textParts.push(...hierLines);
-        }
+        }).join('\n\n');
         KNOWLEDGE.push({
-          type: 'semantic_model_table', id: `${modelName}::${tblName}`,
+          type: 'semantic_model_measures', id: `${modelName}::${tblName}`,
           model_name: modelName, model_id: item.id, table_name: tblName,
-          columns: info.columns, hierarchies: info.hierarchies || [],
-          description: info.description || '', mode: info.mode || '',
-          isCalculated: info.isCalculated, sourceLineageTag: info.sourceLineageTag || '',
-          text: textParts.join('\n'),
+          measures: measures,
+          text: `Semantic Model: ${modelName}\nTable: ${tblName}\n${measText}`,
         });
         chunkCount++;
       }
@@ -1059,27 +596,6 @@ function buildSemanticModelChunks() {
           model_name: modelName, model_id: item.id,
           relationships: relationships,
           text: `Semantic Model: ${modelName}\nRelationships:\n${relText}`,
-        });
-        chunkCount++;
-      }
-
-      // ── semantic_model_perspectives chunk ──
-      if (perspectives.length > 0) {
-        const perspText = perspectives.map(p => {
-          const tblSummaries = p.tables.map(t => {
-            const parts = [t.table];
-            if (t.measures.length) parts.push(`measures: ${t.measures.join(', ')}`);
-            if (t.columns.length) parts.push(`columns: ${t.columns.join(', ')}`);
-            if (t.hierarchies.length) parts.push(`hierarchies: ${t.hierarchies.join(', ')}`);
-            return `  ${parts.join(' | ')}`;
-          });
-          return `Perspective: ${p.name}\n${tblSummaries.join('\n')}`;
-        }).join('\n\n');
-        KNOWLEDGE.push({
-          type: 'semantic_model_perspectives', id: `${modelName}::perspectives`,
-          model_name: modelName, model_id: item.id,
-          perspectives: perspectives,
-          text: `Semantic Model: ${modelName}\n${perspText}`,
         });
         chunkCount++;
       }
@@ -1124,43 +640,24 @@ function buildCrossReferences() {
     }
   }
 
-  // 4. Enrich SM measures chunks with used_in_report_pages + used_in_visuals
+  // 4. Enrich SM measures chunks with used_in_report_pages
   for (const mc of smMeasures) {
     const measureNames = (mc.measures || []).map(m => (m.name || '').toLowerCase());
     const tableName = (mc.table_name || '').toLowerCase();
     const matchedPages = [];
-    const matchedVisuals = []; // {report, page, visual_type, measure}
 
     for (const pg of rptPages) {
-      // Match at page level (fields_used)
+      // Match only if report page references a measure name from this table
       const pgFields = (pg.fields_used || []).map(f => f.toLowerCase());
-      const hitMeasures = [];
-      for (const f of pgFields) {
+      const hit = pgFields.some(f => {
         const dotIdx = f.indexOf('.');
-        if (dotIdx < 0) continue;
+        if (dotIdx < 0) return false;
         const entity = f.slice(0, dotIdx);
         const prop = f.slice(dotIdx + 1);
-        if (entity === tableName && measureNames.includes(prop)) hitMeasures.push(prop);
-      }
-      if (hitMeasures.length > 0) {
+        return entity === tableName && measureNames.includes(prop);
+      });
+      if (hit) {
         matchedPages.push({ report: pg.report_name, page: pg.page_name });
-      }
-
-      // Match at visual level (visuals[].fields)
-      for (const vis of (pg.visuals || [])) {
-        const vFields = (vis.fields || []).map(f => f.toLowerCase());
-        for (const f of vFields) {
-          const dotIdx = f.indexOf('.');
-          if (dotIdx < 0) continue;
-          const entity = f.slice(0, dotIdx);
-          const prop = f.slice(dotIdx + 1);
-          if (entity === tableName && measureNames.includes(prop)) {
-            matchedVisuals.push({
-              report: pg.report_name, page: pg.page_name,
-              visual_type: vis.type, measure: prop,
-            });
-          }
-        }
       }
     }
 
@@ -1169,19 +666,9 @@ function buildCrossReferences() {
       const uniqueReports = [...new Set(matchedPages.map(p => p.report))];
       mc.text += `\nUsed in ${matchedPages.length} report page(s) across ${uniqueReports.length} report(s): ${uniqueReports.join(', ')}`;
     }
-    if (matchedVisuals.length > 0) {
-      mc.used_in_visuals = matchedVisuals;
-      // Add visual-level detail to text
-      const vizSummary = [...new Set(matchedVisuals.map(v => `${v.measure} in ${v.visual_type} (${v.report}/${v.page})`))];
-      if (vizSummary.length <= 10) {
-        mc.text += `\nVisual usage: ${vizSummary.join('; ')}`;
-      } else {
-        mc.text += `\nUsed in ${matchedVisuals.length} visuals across ${[...new Set(matchedVisuals.map(v => v.report))].length} report(s)`;
-      }
-    }
   }
 
-  // 5. Enrich report_page chunks with measures_referenced from SM (page + visual level)
+  // 5. Enrich report_page chunks with measures_referenced from SM
   for (const pg of rptPages) {
     const smName = (pg.semantic_model_name || '').toLowerCase();
     if (!smName) continue;
@@ -1189,6 +676,7 @@ function buildCrossReferences() {
     const measuresReferenced = [];
     for (const fld of (pg.fields_used || [])) {
       const fldLower = fld.toLowerCase();
+      // Check if this field is a measure in the linked semantic model
       if (measureNameToModel[fldLower] && measureNameToModel[fldLower].toLowerCase() === smName) {
         measuresReferenced.push(fld);
       }
@@ -1196,28 +684,15 @@ function buildCrossReferences() {
     if (measuresReferenced.length > 0) {
       pg.measures_referenced = measuresReferenced;
     }
-
-    // Enrich per-visual measure references
-    for (const vis of (pg.visuals || [])) {
-      const visMeasures = [];
-      for (const f of (vis.fields || [])) {
-        const fLower = f.toLowerCase();
-        if (measureNameToModel[fLower] && measureNameToModel[fLower].toLowerCase() === smName) {
-          visMeasures.push(f);
-        }
-      }
-      if (visMeasures.length > 0) vis.measures_used = visMeasures;
-    }
   }
 
   const xrefCount = smOverviews.filter(s => s.used_in_reports).length
                   + smMeasures.filter(m => m.used_in_report_pages).length
-                  + smMeasures.filter(m => m.used_in_visuals).length
                   + rptPages.filter(p => p.measures_referenced).length;
-  console.log(`[XREF] Cross-referenced ${xrefCount} chunks (SM↔Report linkage, including visual-level)`);
+  console.log(`[XREF] Cross-referenced ${xrefCount} chunks (SM↔Report linkage)`);
 }
 
-// ── TMDL Table Parser: extracts columns, measures, partitions, hierarchies from a single table .tmdl ──
+// ── TMDL Table Parser: extracts columns, measures, partitions from a single table .tmdl ──
 function _parseTmdlTable(payload) {
   const lines = payload.split('\n');
   if (lines.length === 0) return null;
@@ -1227,24 +702,9 @@ function _parseTmdlTable(payload) {
   if (!tblMatch) return null;
   const tableName = (tblMatch[1] || tblMatch[2] || tblMatch[3] || '').trim();
 
-  const result = {
-    name: tableName, columns: [], measures: [], hierarchies: [],
-    isCalculated: false, description: '', lineageTag: '', sourceLineageTag: '',
-    mode: '', partitionSource: '',
-  };
+  const result = { name: tableName, columns: [], measures: [], isCalculated: false };
 
-  // Parse table-level properties (lines before first column/measure/partition/hierarchy)
   let i = 1;
-  while (i < lines.length) {
-    const trimmed = lines[i].trimStart();
-    // Stop at first top-level block element
-    if (/^(column|measure|hierarchy|partition)\s+/i.test(trimmed)) break;
-    if (/^description:\s*/i.test(trimmed)) result.description = trimmed.replace(/^description:\s*/i, '').trim();
-    else if (/^lineageTag:\s*/i.test(trimmed)) result.lineageTag = trimmed.split(':').slice(1).join(':').trim();
-    else if (/^sourceLineageTag:\s*/i.test(trimmed)) result.sourceLineageTag = trimmed.replace(/^sourceLineageTag:\s*/i, '').trim();
-    i++;
-  }
-
   while (i < lines.length) {
     const trimmed = lines[i].trimStart();
 
@@ -1264,39 +724,10 @@ function _parseTmdlTable(payload) {
       continue;
     }
 
-    // ── Hierarchy ──
-    if (/^hierarchy\s+/i.test(trimmed)) {
-      const hier = _parseTmdlHierarchy(lines, i);
-      result.hierarchies.push(hier.data);
-      i = hier.nextLine;
-      continue;
-    }
-
-    // ── Partition (detect calculated tables + mode + source) ──
+    // ── Partition (detect calculated tables) ──
     if (/^partition\s+/i.test(trimmed)) {
       if (/=\s*calculated/i.test(trimmed)) result.isCalculated = true;
-      // Parse partition sub-properties
       i++;
-      while (i < lines.length) {
-        const ptrim = lines[i].trimStart();
-        if (/^(column|measure|hierarchy|partition|table|annotation\s+PBI_Id)\s*/i.test(ptrim) && ptrim !== '') break;
-        if (/^mode:\s*/i.test(ptrim)) result.mode = ptrim.split(':')[1].trim();
-        else if (/^source\s*=/i.test(ptrim)) {
-          // Collect multi-line source expression
-          const srcLines = [ptrim.replace(/^source\s*=\s*/i, '')];
-          i++;
-          while (i < lines.length) {
-            const sl = lines[i].trimStart();
-            if (/^(column|measure|hierarchy|partition|table|annotation\s+PBI_Id|mode:)\s*/i.test(sl) && sl !== '') break;
-            if (sl === '') { i++; continue; }
-            srcLines.push(lines[i]);
-            i++;
-          }
-          result.partitionSource = srcLines.join('\n').trim();
-          continue;
-        }
-        i++;
-      }
       continue;
     }
 
@@ -1313,34 +744,13 @@ function _parseTmdlColumn(lines, startIdx) {
   const name = nameMatch ? (nameMatch[1] || nameMatch[2] || nameMatch[3] || '').trim() : 'unknown';
 
   const col = { name };
-
-  // Detect calculated column: "column Name = <DAX expression>"
-  const calcMatch = header.match(/^column\s+(?:'[^']+'|"[^"]+"|[^\s=]+)\s*=\s*(.+)/i);
-  if (calcMatch) {
-    col.isCalculatedColumn = true;
-    col.expression = calcMatch[1].trim();
-  }
-
   let i = startIdx + 1;
-
-  // Handle backtick-wrapped multi-line expressions for calculated columns
-  let inBacktickBlock = false;
-  const exprLines = [];
-  if (col.isCalculatedColumn && col.expression) {
-    if (col.expression.startsWith('```')) { inBacktickBlock = true; exprLines.push(col.expression); }
-    else exprLines.push(col.expression);
-  }
 
   while (i < lines.length) {
     const trimmed = lines[i].trimStart();
-    // Stop at next top-level element (unless inside backtick block)
-    if (/^(column|measure|hierarchy|partition|table|annotation\s+PBI_Id)\s*/i.test(trimmed) && trimmed !== '' && !inBacktickBlock) {
+    // Stop at next top-level element
+    if (/^(column|measure|hierarchy|partition|table|annotation\s+PBI_Id)\s*/i.test(trimmed) && trimmed !== '') {
       break;
-    }
-    if (inBacktickBlock) {
-      exprLines.push(lines[i]);
-      if (trimmed.includes('```')) inBacktickBlock = false;
-      i++; continue;
     }
     // Parse properties
     if (/^dataType:\s*/i.test(trimmed)) col.dataType = trimmed.split(':')[1].trim();
@@ -1355,54 +765,7 @@ function _parseTmdlColumn(lines, startIdx) {
     i++;
   }
 
-  // Finalize calculated column expression
-  if (col.isCalculatedColumn && exprLines.length > 0) {
-    col.expression = exprLines.join('\n').replace(/```/g, '').trim();
-  }
-
   return { data: col, nextLine: i };
-}
-
-// Parse a hierarchy block starting at line index i
-function _parseTmdlHierarchy(lines, startIdx) {
-  const header = lines[startIdx].trimStart();
-  const nameMatch = header.match(/^hierarchy\s+(?:'([^']+)'|"([^"]+)"|(\S+))/i);
-  const name = nameMatch ? (nameMatch[1] || nameMatch[2] || nameMatch[3] || '').trim() : 'unknown';
-
-  const hier = { name, levels: [], lineageTag: '', description: '' };
-  let i = startIdx + 1;
-  let currentLevel = null;
-
-  while (i < lines.length) {
-    const trimmed = lines[i].trimStart();
-    // Stop at next top-level element
-    if (/^(column|measure|hierarchy|partition|table|annotation\s+PBI_Id)\s*/i.test(trimmed) && trimmed !== '') {
-      break;
-    }
-    // Level declaration
-    if (/^level\s+/i.test(trimmed)) {
-      const lvlMatch = trimmed.match(/^level\s+(?:'([^']+)'|"([^"]+)"|(\S+))/i);
-      currentLevel = {
-        name: lvlMatch ? (lvlMatch[1] || lvlMatch[2] || lvlMatch[3] || '').trim() : 'unknown',
-        column: '', ordinal: -1,
-      };
-      hier.levels.push(currentLevel);
-      i++; continue;
-    }
-    // Level sub-properties
-    if (currentLevel) {
-      if (/^column:\s*/i.test(trimmed)) currentLevel.column = trimmed.split(':').slice(1).join(':').trim();
-      else if (/^ordinal:\s*/i.test(trimmed)) currentLevel.ordinal = parseInt(trimmed.split(':')[1].trim(), 10);
-    }
-    // Hierarchy-level properties
-    if (/^lineageTag:\s*/i.test(trimmed)) hier.lineageTag = trimmed.split(':').slice(1).join(':').trim();
-    else if (/^description:\s*/i.test(trimmed) && !currentLevel) hier.description = trimmed.replace(/^description:\s*/i, '').trim();
-    i++;
-  }
-
-  // Sort levels by ordinal if available
-  hier.levels.sort((a, b) => a.ordinal - b.ordinal);
-  return { data: hier, nextLine: i };
 }
 
 // Parse a measure block starting at line index i
@@ -1487,41 +850,681 @@ function _parseTmdlRelationships(payload) {
   return rels;
 }
 
-// ── TMDL Perspective Parser ──
-function _parseTmdlPerspective(payload) {
-  const lines = payload.split('\n');
-  if (lines.length === 0) return null;
+// ── Chain-aware lineage following ────────────────────────────
+function followLineageChain(fieldName) {
+  const chain = { consumption: [], platinum: [], gold: [], silver: [], bronze: [], found: false };
+  if (!fieldName || KNOWLEDGE.length === 0) return chain;
 
-  const hdr = lines[0].match(/^perspective\s+(?:'([^']+)'|"([^"]+)"|(.+))/);
-  if (!hdr) return null;
-  const name = (hdr[1] || hdr[2] || hdr[3] || '').trim();
+  const fieldLower = fieldName.toLowerCase();
+  console.log(`[CHAIN] Starting chain trace for field: ${fieldName}`);
 
-  const perspective = { name, tables: [] };
-  let currentTable = null;
-
-  for (let i = 1; i < lines.length; i++) {
-    const trimmed = lines[i].trimStart();
-    if (/^perspectiveTable\s+/i.test(trimmed)) {
-      const tMatch = trimmed.match(/^perspectiveTable\s+(?:'([^']+)'|"([^"]+)"|(\S+))/i);
-      currentTable = {
-        table: tMatch ? (tMatch[1] || tMatch[2] || tMatch[3] || '').trim() : '',
-        measures: [], columns: [], hierarchies: [],
-      };
-      perspective.tables.push(currentTable);
-    } else if (currentTable && /^perspectiveMeasure\s+/i.test(trimmed)) {
-      const mMatch = trimmed.match(/^perspectiveMeasure\s+(?:'([^']+)'|"([^"]+)"|(\S+))/i);
-      if (mMatch) currentTable.measures.push((mMatch[1] || mMatch[2] || mMatch[3] || '').trim());
-    } else if (currentTable && /^perspectiveColumn\s+/i.test(trimmed)) {
-      const cMatch = trimmed.match(/^perspectiveColumn\s+(?:'([^']+)'|"([^"]+)"|(\S+))/i);
-      if (cMatch) currentTable.columns.push((cMatch[1] || cMatch[2] || cMatch[3] || '').trim());
-    } else if (currentTable && /^perspectiveHierarchy\s+/i.test(trimmed)) {
-      const hMatch = trimmed.match(/^perspectiveHierarchy\s+(?:'([^']+)'|"([^"]+)"|(\S+))/i);
-      if (hMatch) currentTable.hierarchies.push((hMatch[1] || hMatch[2] || hMatch[3] || '').trim());
+  // STEP 0: Consumption layer — find SM measures/columns and reports that reference this field
+  for (const chunk of KNOWLEDGE) {
+    if (chunk.type === 'semantic_model_measures') {
+      // Check if any measure's DAX references this field, or if field IS a measure name
+      const measures = chunk.measures || [];
+      for (const m of measures) {
+        const mNameLower = (m.name || '').toLowerCase();
+        const mExprLower = (m.expression || '').toLowerCase();
+        if (mNameLower === fieldLower || mExprLower.includes(fieldLower)) {
+          chain.consumption.push({
+            type: 'measure', model: chunk.model_name, table: chunk.table_name,
+            measure_name: m.name, expression: m.expression,
+            used_in: chunk.used_in_report_pages || [],
+          });
+          chain.found = true;
+        }
+      }
+    } else if (chunk.type === 'semantic_model_overview' && chunk.tables_detail) {
+      // Check if field is a column in any table of this model
+      for (const [tbl, info] of Object.entries(chunk.tables_detail)) {
+        for (const col of (info.columns || [])) {
+          if ((col.name || '').toLowerCase() === fieldLower) {
+            chain.consumption.push({
+              type: 'column', model: chunk.model_name, table: tbl,
+              column: col.name, dataType: col.dataType, isHidden: col.isHidden,
+            });
+            chain.found = true;
+          }
+        }
+      }
+    } else if (chunk.type === 'report_page') {
+      const pgFields = (chunk.fields_used || []).map(f => f.toLowerCase());
+      if (pgFields.some(f => f.endsWith('.' + fieldLower) || f === fieldLower)) {
+        chain.consumption.push({
+          type: 'report_usage', report: chunk.report_name, page: chunk.page_name,
+          semantic_model: chunk.semantic_model_name || '',
+        });
+        chain.found = true;
+      }
     }
   }
-  return perspective;
+  console.log(`[CHAIN] Consumption: ${chain.consumption.length} refs`);
+
+  // STEP 1: Find in Platinum (warehouse_sproc) — parse definition for field mapping
+  for (const chunk of KNOWLEDGE) {
+    if (chunk.type !== 'warehouse_sproc' || !chunk.definition) continue;
+    const defLower = chunk.definition.toLowerCase();
+    if (!defLower.includes(fieldLower)) continue;
+
+    // Parse "AS field_name" pattern to find source column
+    // Patterns: [src_col] AS target, src_col AS target, expression AS target
+    const defText = chunk.definition;
+    const asPatterns = [
+      new RegExp(`\\[([^\\]]+)\\]\\s+AS\\s+${fieldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i'),
+      new RegExp(`([a-z_][a-z0-9_.]+)\\s+AS\\s+${fieldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i'),
+    ];
+    let sourceCol = null;
+    for (const pat of asPatterns) {
+      const m = defText.match(pat);
+      if (m) { sourceCol = m[1]; break; }
+    }
+
+    // Parse FROM clause for source table
+    // Pattern: FROM GenDWH_GoldDWH_LH.dbo.table_name or FROM database.schema.table
+    const fromMatch = defText.match(/FROM\s+(?:\[?[\w]+\]?\.)?(?:\[?[\w]+\]?\.)?\[?([\w]+)\]?/i);
+    const sourceTable = fromMatch ? fromMatch[1] : null;
+
+    chain.platinum.push({
+      sproc: `[${chunk.schema}].[${chunk.name}]`,
+      field: fieldName,
+      sourceCol: sourceCol || '(expression — see SQL)',
+      sourceTable: sourceTable || '(see SQL)',
+      definition: chunk.definition.slice(0, 3000),
+    });
+    chain.found = true;
+    console.log(`[CHAIN] Platinum: ${chunk.name} → sourceCol=${sourceCol}, sourceTable=${sourceTable}`);
+  }
+
+  // STEP 2: Follow to Gold — search field_detail where table≈sourceTable and target_field≈sourceCol
+  const goldTables = new Set();
+  const silverTargets = []; // {table, field} to search in next step
+  for (const p of chain.platinum) {
+    if (!p.sourceTable) continue;
+    const tblLower = p.sourceTable.toLowerCase();
+    const colLower = (p.sourceCol || '').toLowerCase();
+
+    for (const chunk of KNOWLEDGE) {
+      if (chunk.type !== 'field_detail') continue;
+      if (!chunk.table || !chunk.table.toLowerCase().includes(tblLower)) continue;
+      // Match specific field if we know it, otherwise include all fields of this table
+      if (colLower && colLower !== '(expression — see sql)' && chunk.target_field) {
+        if (chunk.target_field.toLowerCase() !== colLower) continue;
+      }
+      if (goldTables.has(chunk.id)) continue;
+      goldTables.add(chunk.id);
+      chain.gold.push(chunk);
+      if (chunk.source_table) silverTargets.push({ table: chunk.source_table, field: chunk.source_column || '' });
+    }
+  }
+  // If no specific col match, also grab table_lineage for overview
+  if (chain.gold.length === 0) {
+    for (const p of chain.platinum) {
+      if (!p.sourceTable) continue;
+      for (const chunk of KNOWLEDGE) {
+        if (chunk.type !== 'table_lineage') continue;
+        if (chunk.id && chunk.id.toLowerCase().includes(p.sourceTable.toLowerCase())) {
+          chain.gold.push(chunk);
+          // Add all source tables as silver targets
+          for (const st of (chunk.source_tables || [])) silverTargets.push({ table: st, field: '' });
+        }
+      }
+    }
+  }
+  console.log(`[CHAIN] Gold: ${chain.gold.length} chunks, silverTargets: ${silverTargets.map(s=>s.table).join(', ')}`);
+
+  // STEP 3: Follow to Silver
+  const silverTables = new Set();
+  const bronzeTargets = [];
+  for (const st of silverTargets) {
+    const tblLower = st.table.toLowerCase().replace(/^.*\./, ''); // strip schema prefix
+    const colLower = st.field.toLowerCase();
+    for (const chunk of KNOWLEDGE) {
+      if (chunk.type !== 'field_detail') continue;
+      if (!chunk.table || !chunk.table.toLowerCase().includes(tblLower)) continue;
+      if (colLower && chunk.target_field && chunk.target_field.toLowerCase() !== colLower) continue;
+      if (silverTables.has(chunk.id)) continue;
+      silverTables.add(chunk.id);
+      chain.silver.push(chunk);
+      if (chunk.source_table) bronzeTargets.push({ table: chunk.source_table });
+    }
+    // Also grab table_lineage for Silver tables
+    for (const chunk of KNOWLEDGE) {
+      if (chunk.type !== 'table_lineage') continue;
+      if (chunk.id && chunk.id.toLowerCase().includes(tblLower)) {
+        if (!silverTables.has('tl_' + chunk.id)) {
+          silverTables.add('tl_' + chunk.id);
+          chain.silver.push(chunk);
+          for (const src of (chunk.source_tables || [])) bronzeTargets.push({ table: src });
+        }
+      }
+    }
+  }
+  console.log(`[CHAIN] Silver: ${chain.silver.length} chunks, bronzeTargets: ${bronzeTargets.map(b=>b.table).join(', ')}`);
+
+  // STEP 4: Follow to Bronze — aggressive matching to ensure completeness
+  if (KB && KB.metadata && KB.metadata.bronze_meta) {
+    // Collect all Silver source tables as additional Bronze targets
+    for (const s of chain.silver) {
+      if (s.type === 'field_detail' && s.source_table) {
+        const src = s.source_table.toLowerCase().replace(/^.*\./, '');
+        if (!bronzeTargets.some(bt => bt.table.toLowerCase().replace(/^.*\./, '') === src)) {
+          bronzeTargets.push({ table: src });
+        }
+      }
+      if (s.type === 'table_lineage' && s.source_tables) {
+        for (const st of s.source_tables) {
+          const src = st.toLowerCase().replace(/^.*\./, '');
+          if (!bronzeTargets.some(bt => bt.table.toLowerCase().replace(/^.*\./, '') === src)) {
+            bronzeTargets.push({ table: src });
+          }
+        }
+      }
+    }
+    const addedKeys = new Set();
+    for (const bt of bronzeTargets) {
+      const tblLower = bt.table.toLowerCase().replace(/^.*\./, '');
+      for (const bm of KB.metadata.bronze_meta) {
+        const bmTarget = (bm.target_table || '').toLowerCase();
+        // Match by target_table or source_table (partial match both ways)
+        if (bmTarget.includes(tblLower) || tblLower.includes(bmTarget)
+            || (bm.source_table && bm.source_table.toLowerCase().includes(tblLower))) {
+          const key = `${bm.source_schema}.${bm.source_table}→${bm.target_table}`;
+          if (!addedKeys.has(key)) {
+            addedKeys.add(key);
+            chain.bronze.push(bm);
+          }
+        }
+      }
+    }
+  }
+  console.log(`[CHAIN] Bronze: ${chain.bronze.length} mappings`);
+  console.log(`[CHAIN] Summary: C=${chain.consumption.length} P=${chain.platinum.length} G=${chain.gold.length} S=${chain.silver.length} B=${chain.bronze.length}`);
+  return chain;
 }
 
+function formatChainContext(chain, fieldName) {
+  let ctx = '';
+
+  // Consumption layer (SM + Reports)
+  ctx += `=== CONSUMPTION LAYER (Semantic Models & Reports) ===\n`;
+  if (chain.consumption && chain.consumption.length > 0) {
+    for (const c of chain.consumption) {
+      if (c.type === 'measure') {
+        ctx += `Measure: ${c.model}.${c.table}.${c.measure_name}\n`;
+        ctx += `DAX: ${(c.expression || '').slice(0, 500)}\n`;
+        if (c.used_in.length > 0) ctx += `Used in: ${c.used_in.map(u => `${u.report}/${u.page}`).join(', ')}\n`;
+        ctx += '\n';
+      } else if (c.type === 'column') {
+        ctx += `Column: ${c.model}.${c.table}.${c.column} (${c.dataType||'?'})${c.isHidden ? ' [hidden]' : ''}\n`;
+      } else if (c.type === 'report_usage') {
+        ctx += `Report: ${c.report} → ${c.page}${c.semantic_model ? ' (model: ' + c.semantic_model + ')' : ''}\n`;
+      }
+    }
+  } else {
+    ctx += `(No Semantic Model or Report references found for ${fieldName})\n`;
+  }
+
+  ctx += `\n=== PLATINUM LAYER (Warehouse) ===\n`;
+  if (chain.platinum.length > 0) {
+    for (const p of chain.platinum) {
+      ctx += `Stored Procedure: ${p.sproc}\n`;
+      ctx += `Target field: ${p.field}\n`;
+      ctx += `Source column: ${p.sourceCol}\n`;
+      ctx += `Source table: ${p.sourceTable}\n`;
+      ctx += `SQL Definition:\n${p.definition}\n\n`;
+    }
+  } else {
+    ctx += `(No Platinum mapping found for ${fieldName})\n`;
+  }
+  ctx += `\n=== GOLD LAYER (DWH) ===\n`;
+  if (chain.gold.length > 0) {
+    for (const g of chain.gold) {
+      if (g.type === 'field_detail') {
+        ctx += `AI Lineage: ${g.table}.${g.target_field} ← ${g.source_table||'?'}.${g.source_column||'?'}\n`;
+        ctx += `Type: ${g.transformation_type||''} | Expr: ${g.expression||''}\n`;
+        ctx += `Logic: ${g.business_logic||''}\n\n`;
+      } else if (g.type === 'table_lineage') {
+        ctx += `Table: ${g.id} (${g.layer} ${g.mode}) — ${g.field_count} fields\n`;
+        ctx += `Sources: ${g.source_tables?.join(', ')||'none'}\n\n`;
+      }
+    }
+  } else {
+    ctx += `(No Gold lineage found)\n`;
+  }
+  ctx += `\n=== SILVER LAYER (Staging) ===\n`;
+  if (chain.silver.length > 0) {
+    for (const s of chain.silver) {
+      if (s.type === 'field_detail') {
+        ctx += `AI Lineage: ${s.table}.${s.target_field} ← ${s.source_table||'?'}.${s.source_column||'?'}\n`;
+        ctx += `Type: ${s.transformation_type||''} | Expr: ${s.expression||''}\n`;
+        ctx += `Logic: ${s.business_logic||''}\n\n`;
+      } else if (s.type === 'table_lineage') {
+        ctx += `Table: ${s.id} (${s.layer} ${s.mode}) — ${s.field_count} fields\n`;
+        ctx += `Sources: ${s.source_tables?.join(', ')||'none'}\n\n`;
+      }
+    }
+  } else {
+    ctx += `(No Silver lineage found)\n`;
+  }
+  ctx += `\n=== BRONZE LAYER (Landing/Source) ===\n`;
+  if (chain.bronze.length > 0) {
+    for (const b of chain.bronze) {
+      ctx += `Bronze Mapping: ${b.target_table} ← ${b.source_schema||''}.${b.source_table}\n`;
+      ctx += `Columns: ${b.source_columns || '*'} | Active: ${b.is_active}\n\n`;
+    }
+  } else {
+    ctx += `(No Bronze mapping found)\n`;
+  }
+  return ctx;
+}
+
+// ── Entity Pinning: guarantee all chunks for a named entity enter context ──
+function getPinnedChunks(query, scoredChunks) {
+  // 1. Build entity name → chunks index from scored chunks
+  const entityIndex = {};  // lowercase name → [chunk indices]
+  for (let i = 0; i < scoredChunks.length; i++) {
+    const raw = scoredChunks[i]._raw || {};
+    const names = [
+      raw.model_name, raw.target_table, raw.table_name,
+      raw.pipeline, raw.report_name,
+    ].filter(Boolean);
+    for (const n of names) {
+      const key = n.toLowerCase();
+      if (key.length < 4) continue; // skip short names to avoid false matches
+      if (!entityIndex[key]) entityIndex[key] = [];
+      entityIndex[key].push(i);
+    }
+  }
+
+  // 2. Find entity names that appear in the query
+  const qLower = query.toLowerCase();
+  const matchedIndices = new Set();
+  for (const [name, indices] of Object.entries(entityIndex)) {
+    if (qLower.includes(name)) {
+      for (const idx of indices) matchedIndices.add(idx);
+    }
+  }
+
+  // 3. Collect pinned chunks, deduplicated, capped at 8000 chars
+  const pinned = [];
+  let pinnedLen = 0;
+  const CAP = 8000;
+  for (const idx of matchedIndices) {
+    const c = scoredChunks[idx];
+    if (pinnedLen + c.text.length > CAP) continue;
+    pinned.push(c);
+    pinnedLen += c.text.length;
+  }
+  return pinned;
+}
+
+// ── RAG retrieval (keyword + knowledge base) ──────────────────
+async function retrieveContext(query) {
+  if (!KB) return '(No data loaded)';
+  try {
+    const queryLower = query.toLowerCase();
+    // Keep compound tokens (underscore-joined field names) AND split into parts
+    const rawTokens = queryLower.replace(/[^a-z0-9а-яё_]/gi, ' ').split(/\s+/).filter(t => t.length > 2);
+    const compoundTokens = rawTokens.filter(t => t.includes('_')); // e.g. "premium_paid_amount_bgn_mode"
+    const splitTokens = rawTokens.flatMap(t => t.includes('_') ? t.split('_').filter(p => p.length > 2) : [t]);
+    const tokens = [...new Set([...compoundTokens, ...splitTokens])]; // deduplicate
+
+    // Detect warehouse/Platinum queries
+    const isWarehouseQuery = /platinum|warehouse|dwh|stored.?proc|sproc|хранилищ|платинум/i.test(query);
+    const warehouseBoost = isWarehouseQuery ? 12 : 0;
+
+    // Detect pipeline queries — keyword match OR any token matches a pipeline/activity name
+    const isPipelineQuery = /pipeline|пайплайн|оркестрац|orchestrat|activity|активит|datapipeline/i.test(query)
+      || tokens.some(t => PIPELINE_INDEX[t]);
+    const pipelineBoost = isPipelineQuery ? 15 : 0;
+
+    // Detect report queries — report names (GEN_PBI_*) or report-related keywords
+    const isReportQuery = /report|репорт|визуализаци|dashboard|дашборд|GEN_PBI_|засегнати.?report|кои.?report|страниц|page/i.test(query)
+      || tokens.some(t => t.startsWith('gen_pbi_'));
+    const reportBoost = isReportQuery ? 15 : 0;
+
+    // Detect semantic model queries
+    const isSemanticModelQuery = /semantic.?model|семантич|measure|мерк[аи]|dax|relationship|релаци|SM_|GEN_SM_|tmdl/i.test(query)
+      || tokens.some(t => t.startsWith('gen_sm_') || t.startsWith('sm_'));
+    const semanticModelBoost = isSemanticModelQuery ? 15 : 0;
+
+    // Detect impact analysis queries
+    const isImpactQuery = /impact|засегнат|ако промен|if.*change|кои.?report.*използва|използва.?таблиц|affected|зависим/i.test(query);
+    const impactBoost = isImpactQuery ? 18 : 0;
+
+    // Detect chain lineage queries (end-to-end tracing)
+    const isChainQuery = /от платинум до бронз|end.to.end|full lineage|пълен lineage|проследи до|проследи линеадж|trace.*lineage|от.+до бронз|platinum.*bronze|бронз.*платинум|откъде идва|where does.*come from|lineage.*бронз/i.test(query);
+
+    console.log(`[RAG] Query: "${query}"`);
+    console.log(`[RAG] Tokens (${tokens.length}): ${tokens.join(', ')}`);
+    console.log(`[RAG] Compound tokens: ${compoundTokens.join(', ') || 'none'}`);
+    console.log(`[RAG] Warehouse query: ${isWarehouseQuery}, Pipeline query: ${isPipelineQuery}, Chain query: ${isChainQuery}, Report query: ${isReportQuery}, Impact query: ${isImpactQuery}, SemanticModel query: ${isSemanticModelQuery}`);
+    console.log(`[RAG] KNOWLEDGE chunks: ${KNOWLEDGE.length}, analysisReady: ${analysisReady}`);
+    if (KNOWLEDGE.length > 0) {
+      const types = {};
+      for (const c of KNOWLEDGE) types[c.type] = (types[c.type]||0) + 1;
+      console.log('[RAG] Chunk types:', JSON.stringify(types));
+    }
+
+    // Detect lineage queries (field origin, source tracing — broader than full chain)
+    const isLineageQuery = isChainQuery || /откъде|lineage|произход|source.*field|source.*column|where.*from|идва от|трансформац|transformation/i.test(query);
+
+    // ── Chain lineage: follow Platinum→Gold→Silver→Bronze ────
+    // Try compound tokens first, then any underscore-containing token as field name
+    const chainCandidates = compoundTokens.length > 0 ? compoundTokens : tokens.filter(t => t.includes('_'));
+    if (isChainQuery && analysisReady && KNOWLEDGE.length > 0 && chainCandidates.length > 0) {
+      const fieldName = chainCandidates[0]; // primary field to trace
+      console.log(`[RAG] Chain mode: tracing field "${fieldName}"`);
+      const chain = followLineageChain(fieldName);
+      if (chain.found) {
+        // Chain context gets unlimited budget — Bronze must never be truncated
+        const chainCtx = formatChainContext(chain, fieldName);
+        console.log(`[RAG] Chain context: ${chainCtx.length} chars (C=${chain.consumption.length} P=${chain.platinum.length} G=${chain.gold.length} S=${chain.silver.length} B=${chain.bronze.length})`);
+        window._lastChainQuery = true;
+        // Append supplementary normal search with reduced budget (chain has priority)
+        // This adds breadth without sacrificing chain completeness
+        return chainCtx;
+      } else {
+        console.log(`[RAG] Chain: no Platinum match found, falling back to normal search`);
+        window._lastChainQuery = false;
+      }
+    } else {
+      window._lastChainQuery = false;
+    }
+
+    const chunks = [];
+
+    // ── Knowledge Base search (pre-built JSONL from server) ────
+    if (analysisReady && KNOWLEDGE.length > 0) {
+      // Pipeline index boost: check if any token matches a pipeline/activity name
+      const pipelineHitNames = new Set();
+      for (const t of tokens) {
+        if (PIPELINE_INDEX[t]) pipelineHitNames.add(PIPELINE_INDEX[t]);
+      }
+
+      for (const chunk of KNOWLEDGE) {
+        const blob = JSON.stringify(chunk).toLowerCase();
+        let score = 0;
+
+        // Score compound tokens higher (exact field name match)
+        for (const t of compoundTokens) if (blob.includes(t)) score += 5;
+        // Score split tokens normally
+        for (const t of splitTokens) if (blob.includes(t)) score++;
+
+        if (score === 0) continue;
+        // Format based on chunk type
+        let text = '';
+        if (chunk.type === 'field_detail') {
+          text = `AI Lineage: ${chunk.table}.${chunk.target_field} ← ${chunk.source_table||'?'}.${chunk.source_column||'?'}\nType: ${chunk.transformation_type||''}\nExpr: ${chunk.expression||''}\nLogic: ${chunk.business_logic||''}`;
+          score += 10;
+        } else if (chunk.type === 'table_lineage') {
+          text = `Table Summary: ${chunk.id} (${chunk.layer} ${chunk.mode})\nFields: ${chunk.field_count}\nSources: ${chunk.source_tables?.join(', ')||'none'}\nTransformations: ${chunk.transformation_types?.join(', ')||'none'}`;
+          score += 8;
+        } else if (chunk.type === 'execution_chain') {
+          text = `Execution Chain: ${chunk.pipeline}\nWorkspace: ${chunk.workspace||''}\nNotebooks: ${chunk.notebooks?.join(' → ')||'none'}\nActivities: ${chunk.activity_count||0}\nAffects: ${chunk.target_tables?.slice(0,20).join(', ')||'none'}`;
+          score += 5 + pipelineBoost;
+          // Extra boost if this chain's pipeline name matches a token hit
+          if (pipelineHitNames.has((chunk.pipeline||'').toLowerCase())) score += 10;
+        } else if (chunk.type === 'warehouse_view') {
+          text = `Warehouse View: [${chunk.schema}].[${chunk.name}]\nSQL:\n${(chunk.definition||'').slice(0,3000)}`;
+          score += 3 + warehouseBoost;
+        } else if (chunk.type === 'warehouse_sproc') {
+          text = `Stored Procedure: [${chunk.schema}].[${chunk.name}]\nSQL:\n${(chunk.definition||'').slice(0,3000)}`;
+          score += 4 + warehouseBoost;
+        } else if (chunk.type === 'report_overview') {
+          text = `Report Overview: ${chunk.report_name}\nWorkspace: ${chunk.workspace||''}\nSemantic Model: ${chunk.semantic_model_name||chunk.semantic_model_id||'?'}\nPages: ${chunk.page_count||0}, Visuals: ${chunk.total_visuals||0}\nTables used: ${(chunk.unique_tables||[]).join(', ')}\nFields: ${(chunk.unique_fields||[]).join(', ')}`;
+          score += 6 + reportBoost;
+        } else if (chunk.type === 'report_page') {
+          text = `Report Page: ${chunk.report_name} → ${chunk.page_name}\nSemantic Model: ${chunk.semantic_model_name||''}\nVisuals: ${chunk.visual_count||0} (${Object.entries(chunk.visual_types||{}).map(([k,v])=>`${k}:${v}`).join(', ')})\nTables: ${(chunk.tables_used||[]).join(', ')}\nFields: ${(chunk.fields_used||[]).join(', ')}`;
+          if (chunk.measures_referenced && chunk.measures_referenced.length > 0) text += `\nMeasures referenced: ${chunk.measures_referenced.join(', ')}`;
+          score += 5 + reportBoost;
+        } else if (chunk.type === 'report_impact') {
+          text = `Impact Analysis: table "${chunk.table_name}" is used in ${chunk.report_count||0} report(s): ${(chunk.report_names||[]).join(', ')}\nDetails: ${(chunk.used_in_reports||[]).slice(0,30).map(u=>`${u.report_name}/${u.page_name}: ${u.field}`).join('; ')}`;
+          score += 4 + reportBoost + impactBoost;
+        } else if (chunk.type === 'semantic_model_overview') {
+          // Include column details for richer AI context
+          let detailLines = chunk.text || `Semantic Model: ${chunk.model_name}`;
+          if (chunk.tables_detail) {
+            const tblDetails = Object.entries(chunk.tables_detail).map(([tbl, info]) => {
+              const cols = (info.columns||[]).map(c => {
+                let s = c.name;
+                if (c.dataType) s += ` (${c.dataType})`;
+                if (c.isHidden) s += ' [hidden]';
+                return s;
+              }).join(', ');
+              return `  ${tbl}: ${cols}`;
+            }).join('\n');
+            detailLines += '\nColumns per table:\n' + tblDetails;
+          }
+          if (chunk.used_in_reports && chunk.used_in_reports.length > 0) {
+            detailLines += `\nUsed in reports: ${chunk.used_in_reports.join(', ')}`;
+          }
+          text = detailLines;
+          score += 6 + semanticModelBoost;
+        } else if (chunk.type === 'semantic_model_measures') {
+          text = chunk.text || `Measures: ${chunk.model_name}::${chunk.table_name}`;
+          if (chunk.used_in_report_pages && chunk.used_in_report_pages.length > 0) {
+            const uniqueRpts = [...new Set(chunk.used_in_report_pages.map(p => p.report))];
+            text += `\nUsed in reports: ${uniqueRpts.join(', ')}`;
+          }
+          score += 8 + semanticModelBoost;
+        } else if (chunk.type === 'semantic_model_relationships') {
+          text = chunk.text || `Relationships: ${chunk.model_name}`;
+          score += 6 + semanticModelBoost;
+        } else {
+          text = `${chunk.type}: ${chunk.id}\n${JSON.stringify(chunk).slice(0, 500)}`;
+        }
+        chunks.push({ score, text, type: chunk.type, _raw: chunk });
+      }
+      // Debug: log top matches by type
+      const matched = {};
+      for (const c of chunks) matched[c.type] = (matched[c.type]||0) + 1;
+      console.log(`[RAG] Matched chunks: ${chunks.length}`, JSON.stringify(matched));
+      // Debug: specifically log report chunks
+      const rptChunks = chunks.filter(c => ['report_overview','report_page','report_impact'].includes(c.type));
+      if (rptChunks.length > 0) {
+        console.log(`[RAG] Report chunks matched: ${rptChunks.length}`, rptChunks.slice(0,5).map(c => `${c.type} score=${c.score} ${(c._raw?.report_name||c._raw?.table_name||'').slice(0,40)}`));
+      }
+      if (chunks.length > 0) {
+        chunks.sort((a,b) => b.score - a.score);
+        console.log(`[RAG] Top 5:`, chunks.slice(0,5).map(c => `${c.type} score=${c.score} ${c.text.slice(0,80)}`));
+      }
+    } else if (analysisReady) {
+      // Fallback: search IndexedDB cache
+      for (const token of tokens) {
+        const matches = await kbCache.searchLineage(token);
+        for (const m of matches.slice(0, 20)) {
+          const text = `AI Lineage: ${m.target_table}.${m.target_field} ← ${m.source_table||'?'}.${m.source_column||'?'}\nType: ${m.transformation_type||''}\nExpr: ${m.expression||''}\nLogic: ${m.business_logic||''}`;
+          chunks.push({ score: 10 + (tokens.filter(t => text.toLowerCase().includes(t)).length), text });
+        }
+      }
+    }
+
+    // Search in workspace/item names and definitions (resolve from KB.definitions)
+    if (KB.workspaces) for (const ws of KB.workspaces) {
+      const wsName = ws.displayName || ws.name || ws.id;
+      for (const item of (ws.items || [])) {
+        // Skip Report and SemanticModel items — covered by richer KNOWLEDGE chunks
+        if (item.type === 'Report' || item.type === 'SemanticModel') continue;
+        const itemName = item.displayName || item.name || item.id;
+        const blob = (JSON.stringify(item) + ' ' + itemName).toLowerCase();
+        let score = 0;
+        for (const t of tokens) if (blob.includes(t)) score++;
+        const isPipeline = item.type === 'DataPipeline';
+        // For pipelines, also check definition content for token matches
+        const def = isPipeline ? getPipelineContent(item.id) : null;
+        if (def) {
+          const defLower = def.toLowerCase();
+          for (const t of tokens) if (defLower.includes(t)) score++;
+        }
+        if (score === 0) continue;
+        // For pipeline items: extract activity names and include full definition
+        if (isPipeline && def) {
+          const actNames = [];
+          const actMatches = def.match(/"name"\s*:\s*"([^"]+)"/gi) || [];
+          for (const m of actMatches) {
+            const nm = m.match(/"name"\s*:\s*"([^"]+)"/i);
+            if (nm && nm[1].length > 2) actNames.push(nm[1]);
+          }
+          const uniqueActs = [...new Set(actNames)];
+          const text = `[${wsName}] Pipeline: ${itemName}\nActivities (${uniqueActs.length}): ${uniqueActs.join(', ')}\nDefinition: ${def.slice(0, 6000)}`;
+          chunks.push({ score: score + pipelineBoost, text, type: 'raw_pipeline' });
+        } else if (isPipeline) {
+          // Pipeline without definition — still include basic info
+          chunks.push({ score: score + pipelineBoost, text: `[${wsName}] Pipeline: ${itemName}\n(definition not available)`, type: 'raw_pipeline' });
+        } else {
+          chunks.push({ score, text: `[${wsName}] ${item.type}: ${itemName}\n(no inline definition)` });
+        }
+      }
+    }
+
+    // Search in schemas (values can be array of tables OR object with .tables/.views/.procedures)
+    if (KB.schemas) for (const [itemId, val] of Object.entries(KB.schemas)) {
+      if (!val) continue;
+      const isWarehouse = !Array.isArray(val) && val.item_type;
+      const tblList = Array.isArray(val) ? val : (val.tables || []);
+
+      // Search tables
+      const tblBlob = JSON.stringify(tblList).toLowerCase();
+      let tblScore = 0;
+      for (const t of tokens) if (tblBlob.includes(t)) tblScore++;
+      if (tblScore > 0) {
+        const label = isWarehouse ? `${val.item_type} [${itemId.slice(0,8)}…]` : `Schema [${itemId.slice(0,8)}…]`;
+        chunks.push({ score: tblScore, text: `${label}: ${tblList.length} tables\nTables: ${tblList.map(t=>t.table_name||t.name||t).join(', ')}\nColumns: ${tblList.flatMap(t=>(t.columns||[])).slice(0,50).map(c=>`${c.column_name||c.name} (${c.data_type||''})`).join(', ')}` });
+      }
+
+      // Search views (Warehouse only)
+      if (isWarehouse && val.views) for (const vw of val.views) {
+        const vwBlob = `${vw.schema||''} ${vw.name||''} ${(vw.definition||'').slice(0,4000)}`.toLowerCase();
+        let score = 0;
+        for (const t of compoundTokens) if (vwBlob.includes(t)) score += 5;
+        for (const t of splitTokens) if (vwBlob.includes(t)) score++;
+        if (score > 0) chunks.push({ score: score + 1 + warehouseBoost, text: `View: [${vw.schema||'dbo'}].[${vw.name}]\nSQL:\n${(vw.definition||'').slice(0, 3000)}`, type: 'raw_view' });
+      }
+
+      // Search stored procedures (Warehouse only — critical for lineage)
+      if (isWarehouse && val.procedures) for (const sp of val.procedures) {
+        const spBlob = `${sp.schema||''} ${sp.name||''} ${(sp.definition||'').slice(0,4000)}`.toLowerCase();
+        let score = 0;
+        for (const t of compoundTokens) if (spBlob.includes(t)) score += 5;
+        for (const t of splitTokens) if (spBlob.includes(t)) score++;
+        if (score > 0) chunks.push({ score: score + 2 + warehouseBoost, text: `Stored Procedure: [${sp.schema||'dbo'}].[${sp.name}] (${sp.type||'PROCEDURE'})\nSQL:\n${(sp.definition||'').slice(0, 3000)}`, type: 'raw_sproc' });
+      }
+    }
+
+    // Search in metadata queries (KB.metadata.queries)
+    if (KB.metadata && KB.metadata.queries) for (const mq of KB.metadata.queries) {
+      const blob = JSON.stringify(mq).toLowerCase();
+      let score = 0;
+      for (const t of tokens) if (blob.includes(t)) score++;
+      if (score > 0) chunks.push({ score, text: `Metadata Query [${mq.layer||''}]: ${mq.target_table || mq.meta_table || 'unknown'}\nSQL: ${(mq.source_query || '').slice(0, 1500)}` });
+    }
+
+    // Search in bronze mappings (KB.metadata.bronze_meta) — boost for lineage queries
+    if (KB.metadata && KB.metadata.bronze_meta) for (const bm of KB.metadata.bronze_meta) {
+      const blob = JSON.stringify(bm).toLowerCase();
+      let score = 0;
+      for (const t of tokens) if (blob.includes(t)) score++;
+      if (score > 0) {
+        const bronzeBoost = isLineageQuery ? 6 : 0;
+        chunks.push({ score: score + bronzeBoost, text: `Bronze Mapping: ${bm.target_table || 'unknown'} ← ${bm.source_schema||''}.${bm.source_table || 'unknown'}\nColumns: ${bm.source_columns || '*'} | Active: ${bm.is_active ?? 'unknown'}`, type: 'bronze_mapping' });
+      }
+    }
+
+    // For lineage queries: prioritise chain-relevant chunks (field_detail, table_lineage, bronze)
+    // For report/impact queries: prioritise report chunks within same score tier
+    const CHAIN_TYPES = new Set(['field_detail', 'table_lineage']);
+    const REPORT_TYPES = new Set(['report_overview', 'report_page', 'report_impact']);
+    chunks.sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      if (isLineageQuery) {
+        const aChain = CHAIN_TYPES.has(a.type) ? 1 : 0;
+        const bChain = CHAIN_TYPES.has(b.type) ? 1 : 0;
+        if (bChain !== aChain) return bChain - aChain;
+      }
+      if (isReportQuery || isImpactQuery) {
+        const aRpt = REPORT_TYPES.has(a.type) ? 1 : 0;
+        const bRpt = REPORT_TYPES.has(b.type) ? 1 : 0;
+        if (bRpt !== aRpt) return bRpt - aRpt;
+      }
+      return 0;
+    });
+    // Budget: lineage queries get 20k; warehouse/pipeline/report/SM 16k; default 12k
+    let ctx = '', budget = isLineageQuery ? 20000 : (isWarehouseQuery || isPipelineQuery || isReportQuery || isImpactQuery || isSemanticModelQuery) ? 16000 : 12000;
+
+    // ── Entity Pinning: guarantee all chunks for a named entity enter context ──
+    const pinned = getPinnedChunks(query, chunks);
+    if (pinned.length > 0) {
+      for (const p of pinned) {
+        ctx += p.text + '\n---\n';
+        p._included = true;
+      }
+      console.log(`[RAG] Entity pinning: ${pinned.length} chunks pinned (${ctx.length} chars)`);
+    }
+
+    for (const c of chunks) {
+      if (c._included) continue; // skip pinned chunks
+      if (ctx.length + c.text.length > budget) { if (ctx.length > 0) break; }
+      ctx += c.text + '\n---\n';
+      c._included = true;
+    }
+    // ── Fallback: detect truncated SQL and append full source_query ──
+    const TRUNC_PATTERNS = /-- \.\.\.|- \.\.\.|\/\* \.\.\.|тук са пропуснати|-- \(/i;
+    if (TRUNC_PATTERNS.test(ctx) && KB.metadata && KB.metadata.queries) {
+      // Collect table names from included chunks (target_table, chunk.table, chunk.id)
+      const ctxTableNames = new Set();
+      for (const c of chunks) {
+        if (!c._included) continue; // only check chunks that made it into ctx
+        const raw = c._raw;
+        if (raw) {
+          if (raw.table) ctxTableNames.add(raw.table.toLowerCase());
+          if (raw.target_table) ctxTableNames.add(raw.target_table.toLowerCase());
+          if (raw.id) ctxTableNames.add(raw.id.toLowerCase());
+        }
+      }
+      // Also extract table-like tokens from the user query (underscore-joined words)
+      for (const t of tokens) { if (t.includes('_')) ctxTableNames.add(t); }
+
+      // Find matching metadata queries with full SQL
+      const appended = new Set();
+      for (const mq of KB.metadata.queries) {
+        const tbl = (mq.target_table || mq.meta_table || '').toLowerCase();
+        if (!tbl || !ctxTableNames.has(tbl)) continue;
+        if (appended.has(tbl)) continue;
+        const sql = mq.source_query || '';
+        if (!sql || sql.length < 50) continue;
+        ctx += `\n--- FULL SOURCE SQL for ${mq.target_table || mq.meta_table} [${mq.layer||''}] ---\n${sql}\n---\n`;
+        appended.add(tbl);
+        console.log(`[RAG] Appended full SQL for ${tbl} (${sql.length} chars) — truncation fallback`);
+      }
+    }
+
+    console.log(`[RAG] Final context: ${ctx.length} chars, ${chunks.length} chunks considered, budget: ${budget}`);
+    return ctx || '(No matching context found for this query)';
+  } catch (err) {
+    console.error('retrieveContext error:', err);
+    return '(Context retrieval failed — answering without metadata context)';
+  }
+}
+
+// ── System prompt ──────────────────────────────────────────────
+const SYSTEM_PROMPT = `You are GenDWH Knowledge Assistant — an AI expert on the GenDWH Data Warehouse platform built on Microsoft Fabric.
+
+Your knowledge comes from the CONTEXT section below, which contains real metadata extracted from the platform: table schemas, pipeline definitions, notebook source code, SQL queries, DAX measures, warehouse stored procedures, and more.
+
+When "AI Lineage" entries are present in the context, these are pre-analyzed field-level lineage results. Prefer them over raw SQL — they contain resolved source tables, transformation types, and business logic explanations.
+
+When "Stored Procedure" entries are present, these contain the actual SQL definitions from the Platinum (Warehouse) layer. For Platinum/DWH lineage questions, these are the PRIMARY source of truth — they show exactly how fields are mapped from Gold layer tables into the Warehouse.
+
+Rules:
+- Answer in the SAME LANGUAGE as the question (Bulgarian or English)
+- Cite specific table names, column names, SQL expressions, DAX measures from the context
+- If the information is NOT in the context, say so explicitly — do not guess
+- Use Markdown formatting: headers, bullet lists, code blocks, tables
+- For lineage questions, trace data flow: source → transformations → target
+- For Platinum/Warehouse fields, show the column mapping from the stored procedure SQL (e.g. [source_col] AS target_col)
+- Be concise but thorough`;
 
 // ── Excel generation helpers ───────────────────────────────────
 const TEAL = '1C8D7A';
@@ -2562,8 +2565,8 @@ async function generateCustomReportExcel(query) {
   await new Promise(r => setTimeout(r, 50));
 
   // ── Build context for Claude ───────────────────────────────
-  log('Gathering context from knowledge base (server-side)...');
-  const context = ''; // Context now provided server-side via RAG
+  log('Gathering context from knowledge base...');
+  const context = analysisReady ? retrieveContext(query) : '';
 
   // ── Ask Claude for structured report data ──────────────────
   log('Asking Claude to generate report data...');
@@ -2929,7 +2932,6 @@ async function visualizePipeline(userText) {
   console.log(`[SKILL] Pipeline visualization rendered: ${displayName}, ${nodes.length} nodes, ${edges.length} edges`);
 }
 
-
 // ── Skill detection ────────────────────────────────────────────
 function detectSkill(text) {
   const t = text.trim().toLowerCase();
@@ -2991,13 +2993,22 @@ async function sendMessage(text) {
   chatArea.appendChild(spinner);
   chatArea.scrollTop = chatArea.scrollHeight;
 
+  // RAG context
+  const context = await retrieveContext(text);
+  let systemWithContext = SYSTEM_PROMPT;
+  if (window._lastChainQuery) {
+    systemWithContext += '\n\nIMPORTANT: The context contains a multi-layer lineage chain from Platinum (Warehouse) to Bronze (Landing). Trace and explain each step of the transformation pipeline, layer by layer. Show how the field flows through each layer with specific column names and transformations.';
+  }
+  systemWithContext += '\n\nCONTEXT:\n' + context;
+
   try {
     sendBtn.disabled = true;
     const resp = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question: text, chatHistory })
+      body: JSON.stringify({ messages: chatHistory, system: systemWithContext })
     });
+
     const data = await resp.json();
     spinner.remove();
 
@@ -3005,13 +3016,7 @@ async function sendMessage(text) {
       appendMessage('assistant', '⚠️ Error: ' + (data.error.message || data.error));
     } else {
       const reply = data.content ? data.content.map(c => c.text).join('') : 'No response';
-      let usageInfo = null;
-      if (data.usage) {
-        const inp = data.usage.input_tokens || 0;
-        const out = data.usage.output_tokens || 0;
-        usageInfo = recordUsage(inp, out);
-      }
-      appendMessage('assistant', reply, usageInfo);
+      appendMessage('assistant', reply);
       chatHistory.push({ role: 'assistant', content: reply });
     }
   } catch (err) {
@@ -3023,7 +3028,7 @@ async function sendMessage(text) {
   }
 }
 
-function appendMessage(role, content, usageInfo) {
+function appendMessage(role, content) {
   const div = document.createElement('div');
   div.className = `message ${role}`;
   const label = document.createElement('div');
@@ -3052,15 +3057,6 @@ function appendMessage(role, content, usageInfo) {
   }
   div.appendChild(label);
   div.appendChild(bubble);
-  // Show token usage info under assistant messages
-  if (role === 'assistant' && usageInfo) {
-    const info = document.createElement('div');
-    info.className = 'token-info';
-    info.innerHTML = `<span>⬆ ${formatTokens(usageInfo.inputTokens)} in</span>`
-      + `<span>⬇ ${formatTokens(usageInfo.outputTokens)} out</span>`
-      + `<span class="cost">$${usageInfo.cost.toFixed(4)}</span>`;
-    div.appendChild(info);
-  }
   chatArea.appendChild(div);
   chatArea.scrollTop = chatArea.scrollHeight;
 }
@@ -3130,7 +3126,3 @@ document.querySelectorAll('.prompt-send').forEach(btn => {
 
 // ── Init ───────────────────────────────────────────────────────
 loadData();
-updateUsageSummary();
-</script>
-</body>
-</html>

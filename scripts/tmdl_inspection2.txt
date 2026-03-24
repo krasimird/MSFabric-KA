@@ -1,0 +1,297 @@
+﻿=== ALL SEMANTIC MODELS ===
+  Gen_SM_Written_Premium_v0 | ws=GenDWH_Dev_WS_D | parts=22 | tables=15 | has_relationships=true | has_perspectives=false
+  GEN_SM_Policy | ws=GenDWH_Dev_WS_D | parts=22 | tables=16 | has_relationships=true | has_perspectives=false
+  SM_DWH_Policy_premiums_claims_recourses | ws=GenDWH_Dev_WS_D | parts=12 | tables=6 | has_relationships=true | has_perspectives=false
+  SM Underwriters | ws=GenDWH_Dev_WS_D | parts=28 | tables=22 | has_relationships=true | has_perspectives=false
+  SM_REVENUE_FORECAST | ws=GenDWH_Dev_WS_D | parts=11 | tables=5 | has_relationships=true | has_perspectives=false
+  GEN_PBI_Casco_Report_Import | ws=GenDWH_Dev_WS_D | parts=48 | tables=15 | has_relationships=true | has_perspectives=false
+  SM_Basic_Insurance_Benchmarks | ws=GenDWH_Dev_WS_D | parts=58 | tables=52 | has_relationships=true | has_perspectives=false
+  GEN_PBI_Casco_Report_Import | ws=GenDWH_Underwriting_UWS | parts=47 | tables=15 | has_relationships=true | has_perspectives=false
+  Report Usage Metrics Model | ws=GenDWH_Underwriting_UWS | parts=15 | tables=9 | has_relationships=true | has_perspectives=false
+  GEN_PBI_AUTOMATE_STRING_TEST | ws=GenDWH_Underwriting_UWS | parts=11 | tables=1 | has_relationships=true | has_perspectives=false
+
+=== MODEL DETAIL: Gen_SM_Written_Premium_v0 ===
+Parts: definition.pbism, definition/tables/fact_premiums_written.tmdl, definition/tables/sm_written_premium_type.tmdl, definition/tables/dim_date_pdate_r.tmdl, definition/tables/_Measures.tmdl, definition/tables/dim_date_fact_ifrs.tmdl, definition/tables/BusinessType.tmdl, definition/tables/dim_policy_current.tmdl, definition/tables/dim_written_premium_types_current.tmdl, definition/tables/dim_agents_current.tmdl, definition/tables/dim_insurances_current.tmdl, definition/tables/dim_branches_current.tmdl, definition/tables/dim_branches_hq_current.tmdl, definition/tables/dim_date.tmdl, definition/tables/dim_clients_current.tmdl, definition/tables/dim_clients_current_insured.tmdl, definition/relationships.tmdl, definition/cultures/en-US.tmdl, definition/expressions.tmdl, definition/model.tmdl, definition/database.tmdl, .platform
+Real tables: definition/tables/fact_premiums_written.tmdl, definition/tables/sm_written_premium_type.tmdl, definition/tables/dim_date_pdate_r.tmdl, definition/tables/_Measures.tmdl, definition/tables/dim_date_fact_ifrs.tmdl, definition/tables/BusinessType.tmdl, definition/tables/dim_policy_current.tmdl, definition/tables/dim_written_premium_types_current.tmdl, definition/tables/dim_agents_current.tmdl, definition/tables/dim_insurances_current.tmdl, definition/tables/dim_branches_current.tmdl, definition/tables/dim_branches_hq_current.tmdl, definition/tables/dim_date.tmdl, definition/tables/dim_clients_current.tmdl, definition/tables/dim_clients_current_insured.tmdl
+
+--- definition/tables/fact_premiums_written.tmdl (first 150 lines) ---
+table fact_premiums_written
+	lineageTag: 8148fdf1-8651-4380-a40a-896ca832c52f
+	sourceLineageTag: [dbo].[fact_premiums_written]
+
+	column wpm_sk
+		dataType: int64
+		formatString: 0
+		sourceProviderType: bigint
+		lineageTag: f6aff53e-8d30-4d10-8745-d92082872559
+		sourceLineageTag: wpm_sk
+		summarizeBy: sum
+		sourceColumn: wpm_sk
+
+		annotation SummarizationSetBy = Automatic
+
+	column wpm_akviz_agent_sk
+		dataType: int64
+		isHidden
+		formatString: 0
+		sourceProviderType: bigint
+		lineageTag: 0cbf1d1a-5d73-42b3-8245-b21829aa0da7
+		sourceLineageTag: wpm_akviz_agent_sk
+		summarizeBy: sum
+		sourceColumn: wpm_akviz_agent_sk
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column wpm_akviz_agent_ida
+		dataType: int64
+		isHidden
+		formatString: 0
+		sourceProviderType: int
+		lineageTag: a957f362-2f58-402f-ba9a-080aade7aabe
+		sourceLineageTag: wpm_akviz_agent_ida
+		summarizeBy: sum
+		sourceColumn: wpm_akviz_agent_ida
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column wpm_annex_number
+		dataType: int64
+		formatString: 0
+		sourceProviderType: int
+		lineageTag: dbcde545-126f-41ed-bf4d-787aa3cd9e6a
+		sourceLineageTag: wpm_annex_number
+		summarizeBy: sum
+		sourceColumn: wpm_annex_number
+
+		annotation SummarizationSetBy = Automatic
+
+	column wpm_descript
+		dataType: string
+		sourceProviderType: varchar(8000)
+		lineageTag: ccead77a-29f3-4f26-aa28-a3c95b8f5732
+		sourceLineageTag: wpm_descript
+		summarizeBy: none
+		sourceColumn: wpm_descript
+
+		annotation SummarizationSetBy = Automatic
+
+	column wpm_gf_tax
+		dataType: double
+		sourceProviderType: decimal(19, 4)
+		lineageTag: 845a4064-7d14-404f-8d02-208ee5b96a46
+		sourceLineageTag: wpm_gf_tax
+		summarizeBy: sum
+		sourceColumn: wpm_gf_tax
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column wpm_gf_tax_eur
+		dataType: double
+		sourceProviderType: decimal(19, 4)
+		lineageTag: a7b3c39b-1384-4d8f-bd4d-b65956706b37
+		sourceLineageTag: wpm_gf_tax_eur
+		summarizeBy: sum
+		sourceColumn: wpm_gf_tax_eur
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column wpm_pol_sk
+		dataType: int64
+		formatString: 0
+		sourceProviderType: bigint
+		lineageTag: 718c4c65-0e34-4fa6-b523-5cd59bf9ebc1
+		sourceLineageTag: wpm_pol_sk
+		summarizeBy: sum
+		sourceColumn: wpm_pol_sk
+
+		annotation SummarizationSetBy = Automatic
+
+	column wpm_pol_idp
+		dataType: int64
+		formatString: 0
+		sourceProviderType: int
+		lineageTag: 60102792-2fa9-4781-be6f-c1360d6bf79b
+		sourceLineageTag: wpm_pol_idp
+		summarizeBy: none
+		sourceColumn: wpm_pol_idp
+
+		annotation SummarizationSetBy = Automatic
+
+	column wpm_komis_agent_sk
+		dataType: int64
+		formatString: 0
+		sourceProviderType: bigint
+		lineageTag: 3ba17bed-939e-42c0-bb66-1a1a128357ec
+		sourceLineageTag: wpm_komis_agent_sk
+		summarizeBy: sum
+		sourceColumn: wpm_komis_agent_sk
+
+		annotation SummarizationSetBy = Automatic
+
+	column wpm_komis_agent_ida
+		dataType: int64
+		formatString: 0
+		sourceProviderType: int
+		lineageTag: 3c84f585-6f8a-4ead-943d-3a44bc0688ae
+		sourceLineageTag: wpm_komis_agent_ida
+		summarizeBy: sum
+		sourceColumn: wpm_komis_agent_ida
+
+		annotation SummarizationSetBy = Automatic
+
+	column wpm_nomer
+		dataType: int64
+		formatString: 0
+		sourceProviderType: smallint
+		lineageTag: 6197c454-32e1-4447-a08c-165c82657a38
+		sourceLineageTag: wpm_nomer
+		summarizeBy: sum
+		sourceColumn: wpm_nomer
+
+		annotation SummarizationSetBy = Automatic
+
+	column wpm_parent_premium_number
+		dataType: int64
+		formatString: 0
+		sourceProviderType: int
+		lineageTag: 0a7975bb-a37f-441f-9958-83b9a18a6aa7
+		sourceLineageTag: wpm_parent_premium_number
+		summarizeBy: sum
+... (297 more lines)
+
+--- definition/tables/_Measures.tmdl (first 150 lines) ---
+table _Measures
+	lineageTag: b0fc8595-10f1-4328-8845-3a14dca335b3
+
+	measure ÐÐ°Ñ‡Ð¸ÑÐ»ÐµÐ½Ð°-Ð¿Ñ€ÐµÐ¼Ð¸Ñ = ```
+			
+			SUM(fact_premiums_written[wpm_zapprem])
+			
+			
+			```
+		lineageTag: 02cb8baf-68b2-4b2f-9c5b-e97b91a96b3a
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	measure Ð”Ð¾Ð±Ð°Ð²ÑŠÑ†Ð¸ =
+			
+			VAR MinNomer = MIN(fact_premiums_written[wpm_nomer])           -- Ð¼Ð¸Ð½Ð¸Ð¼ÑƒÐ¼ÑŠÑ‚ Ð² Ñ‚ÐµÐºÑƒÑ‰Ð¸Ñ ÐºÐ¾Ð½Ñ‚ÐµÐºÑÑ‚
+			RETURN
+			IF(MinNomer > 1,
+			    CALCULATE(
+			        SUM('fact_premiums_written'[wpm_zapprem]),
+			        KEEPFILTERS(fact_premiums_written[wpm_nomer] >= MinNomer),
+			        KEEPFILTERS(fact_premiums_written[wpm_wpt_type_id] < 5)
+			    ),
+			        CALCULATE(
+			        SUM('fact_premiums_written'[wpm_zapprem]),
+			        KEEPFILTERS(fact_premiums_written[wpm_nomer] > MinNomer),
+			        KEEPFILTERS(fact_premiums_written[wpm_wpt_type_id] < 5)
+			)
+			)
+		lineageTag: 6752b44d-f82a-489e-a3e7-579d0d4fb2df
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	measure 'ÐžÑ‚Ð¿Ð¸ÑÐ°Ð½Ð° Ð¿Ñ€ÐµÐ¼Ð¸Ñ' = ```
+			
+			    VAR MinNomer = MIN(fact_premiums_written[wpm_nomer])           -- Ð¼Ð¸Ð½Ð¸Ð¼ÑƒÐ¼ÑŠÑ‚ Ð² Ñ‚ÐµÐºÑƒÑ‰Ð¸Ñ ÐºÐ¾Ð½Ñ‚ÐµÐºÑÑ‚
+			RETURN
+			CALCULATE(
+			    SUM('fact_premiums_written'[wpm_zapprem]),
+			    KEEPFILTERS(fact_premiums_written[wpm_nomer] > MinNomer),
+			    KEEPFILTERS(fact_premiums_written[wpm_wpt_type_id] >= 5)
+			)
+			
+			```
+		lineageTag: 191ac2e0-8d70-4698-ac01-e5edadd6fb31
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	measure Measuress = MIN(fact_premiums_written[wpm_nomer])
+		formatString: 0
+		lineageTag: 54eade52-589c-4882-add0-d5f26fc0cba9
+
+	column Measures
+		isHidden
+		formatString: 0
+		lineageTag: 79134f49-e225-4d23-ae33-6e06d93f7054
+		summarizeBy: sum
+		isNameInferred
+		sourceColumn: [Measures]
+
+		annotation SummarizationSetBy = Automatic
+
+	partition _Measures = calculated
+		mode: import
+		source =
+				
+				DATATABLE(
+				    "Measures", INTEGER,
+				
+				    {
+				        {0}
+				    })
+
+	annotation PBI_Id = 1d25871bdb6044ca926ebf68608ca569
+
+
+
+--- definition/relationships.tmdl (first 60 lines) ---
+relationship 2969de4f-8085-da60-0a7f-e94029720418
+	fromColumn: fact_premiums_written.wpm_zap_date_ifrs_id
+	toColumn: dim_date_fact_ifrs.date_key
+
+relationship 76f6f55e-bf19-8508-1e5f-af5571445580
+	fromColumn: fact_premiums_written.wpm_pol_idp
+	toColumn: dim_policy_current.pol_idp
+
+relationship 70e2d666-fc6e-17ed-2675-0ee36d2bf54d
+	fromColumn: dim_policy_current.pol_p_date_r_id
+	toColumn: dim_date_pdate_r.date_key
+
+relationship 2be17aae-fd06-4f26-1261-840ce848feef
+	fromColumn: dim_policy_current.pol_ins_sk
+	toColumn: dim_insurances_current.ins_sk
+
+relationship 6b36b777-56f1-73c0-d7a7-52b842eeb56b
+	fromColumn: dim_policy_current.pol_idkl_brn_sk
+	toColumn: dim_branches_current.brn_sk
+
+relationship 7d307626-a224-9e51-1367-7a373e0d1e69
+	fromColumn: dim_policy_current.pol_idgp_brn_sk
+	toColumn: dim_branches_hq_current.brn_sk
+
+relationship 35e1a86d-5587-abe5-f65f-cfc759fb1c1d
+	fromColumn: fact_premiums_written.wpm_zap_date_id
+	toColumn: dim_date.date_key
+
+relationship 29d63206-220c-6685-e3e0-a75e849621c5
+	crossFilteringBehavior: bothDirections
+	fromColumn: dim_policy_current.pol_agent_sk
+	toColumn: dim_agents_current.agent_sk
+
+relationship 2c28b5da-7e79-05f2-cc16-7597f8345e61
+	crossFilteringBehavior: bothDirections
+	fromColumn: dim_policy_current.pol_client_sk
+	toColumn: dim_clients_current.client_sk
+
+relationship 8de713ea-b506-751f-5416-062e6eded74a
+	fromColumn: dim_policy_current.pol_zastr_client_sk
+	toColumn: dim_clients_current_insured.client_sk
+
+relationship 48d08fd2-0499-b18d-3b54-dc9a68e03dfb
+	fromColumn: fact_premiums_written.wpm_cat_id
+	toColumn: sm_written_premium_type.cat_id
+
+
+
+(No perspectives.tmdl)
