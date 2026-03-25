@@ -1148,85 +1148,7 @@ module.exports = async function (context, req) {
     const ts = new Date().toISOString().replace(/[:.]/g, "-");
     await uploadBlob(`archive/${ts}_knowledge.jsonl`, jsonl, log);
 
-    // ── Step 8: Embed new/changed chunks (only if enough time left) ──
-    let embeddedCount = 0;
-    let embedSkipped = 0;
-    let embedError = null;
-    const timeLeftMs = TIMEOUT_MS - (Date.now() - startTime);
-    if (timeLeftMs < 8000) {
-      log(`[${elapsed()}s] Step 8: Skipping embedding (only ${(timeLeftMs/1000).toFixed(1)}s left, need 8s min). Will embed on next run.`);
-      embedError = "skipped_time_pressure";
-    } else try {
-      const openaiCreds = await getOpenAICredentials(log);
-      if (!openaiCreds) throw new Error("Azure OpenAI credentials not available");
-
-      log(`[${elapsed()}s] Step 8: Embedding new/changed chunks...`);
-      const svc = getBlobClient();
-      const containerClient = svc.getContainerClient(CONTAINER);
-
-      // Parse new JSONL into chunks
-      const newChunks = jsonl.split("\n").map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
-
-      // Load existing vectors
-      const existingText = await downloadTextSafe(containerClient, VECTORS_BLOB);
-      const existingMap = new Map(); // hash → line
-      if (existingText) {
-        for (const line of existingText.trim().split("\n")) {
-          try { const v = JSON.parse(line); if (v.chunk_hash) existingMap.set(v.chunk_hash, line); } catch {}
-        }
-        log(`  Existing vectors: ${existingMap.size}`);
-      }
-
-      // Find chunks needing embedding
-      const toEmbed = [];
-      const newHashes = new Set();
-      for (const chunk of newChunks) {
-        const hash = chunkHash(chunk);
-        newHashes.add(hash);
-        if (!existingMap.has(hash)) toEmbed.push({ chunk, hash, text: chunkToText(chunk) });
-      }
-      embedSkipped = existingMap.size - toEmbed.length;
-      log(`  Chunks to embed: ${toEmbed.length} (${newChunks.length - toEmbed.length} unchanged)`);
-
-      // Remove vectors for chunks no longer in JSONL
-      const outputLines = [];
-      for (const [hash, line] of existingMap) {
-        if (newHashes.has(hash)) outputLines.push(line);
-      }
-
-      // Embed in batches
-      for (let i = 0; i < toEmbed.length; i += EMBED_BATCH_SIZE) {
-        if (Date.now() - startTime > TIMEOUT_MS - 5000) {
-          log(`  ⏱ Embedding timeout — embedded ${embeddedCount}/${toEmbed.length}`);
-          break;
-        }
-        const batch = toEmbed.slice(i, i + EMBED_BATCH_SIZE);
-        const texts = batch.map(b => b.text.slice(0, 8000));
-        try {
-          const embeddings = await embedBatch(texts, openaiCreds.apiKey, openaiCreds.endpoint);
-          for (let j = 0; j < batch.length; j++) {
-            const { chunk, hash } = batch[j];
-            const vec = { chunk_hash: hash, chunk_type: chunk.type, id: chunk.id || "", embedding: embeddings[j] };
-            for (const k of ["table", "model_name", "pipeline", "report_name", "layer", "target_field", "source_table"]) {
-              if (chunk[k]) vec[k] = chunk[k];
-            }
-            vec.text = batch[j].text;
-            outputLines.push(JSON.stringify(vec));
-          }
-          embeddedCount += batch.length;
-        } catch (err) {
-          log(`  Embed batch error at ${i}: ${err.message}`);
-        }
-        if (i + EMBED_BATCH_SIZE < toEmbed.length) await sleep(EMBED_BATCH_DELAY_MS);
-      }
-
-      // Upload updated vectors
-      log(`[${elapsed()}s] Uploading gendwh_vectors.jsonl (${outputLines.length} vectors)...`);
-      await uploadBlob(VECTORS_BLOB, outputLines.join("\n"), log);
-    } catch (err) {
-      embedError = err.message;
-      log(`[${elapsed()}s] Embedding step failed (non-fatal): ${err.message}`);
-    }
+    // Embedding is now handled by /api/embed endpoint
 
     const summary = {
       status: "complete",
@@ -1247,9 +1169,6 @@ module.exports = async function (context, req) {
       catalog_chunks: catalogChunks.length,
       jsonl_lines: lineCount,
       jsonl_bytes: jsonl.length,
-      vectors_embedded: embeddedCount,
-      vectors_skipped: embedSkipped,
-      embed_error: embedError,
     };
     log(`[${elapsed()}s] Done!`, JSON.stringify(summary));
 

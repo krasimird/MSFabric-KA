@@ -574,7 +574,7 @@ async function startAnalysis() {
       break;
     }
 
-    progress.style.width = '90%';
+    progress.style.width = '75%';
     status.textContent = 'Loading updated knowledge base…';
 
     // Reload JSONL from Blob
@@ -589,8 +589,43 @@ async function startAnalysis() {
     if (!KNOWLEDGE.some(c => c.type === 'semantic_model_overview')) buildSemanticModelChunks();
     buildReportChunksClientSide(); // Adds detailed report_page chunks not in server JSONL
     buildCrossReferences();
+
+    // ── Embedding phase: call /api/embed in a loop until all vectors are done ──
+    progress.style.width = '80%';
+    status.textContent = `⏳ Embedding vectors (${KNOWLEDGE.length} chunks)…`;
+    let embedPass = 0;
+    let totalEmbedded = 0;
+    while (true) {
+      embedPass++;
+      console.log(`[Embed] Pass ${embedPass}…`);
+      const embedResp = await fetch('/api/embed', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      const embedText = await embedResp.text();
+      let embedResult;
+      try { embedResult = JSON.parse(embedText); } catch { embedResult = { error: embedText || `HTTP ${embedResp.status}` }; }
+
+      if (!embedResp.ok) {
+        console.error('[Embed] Error:', embedResult);
+        status.textContent = `⚠️ Analysis done but embedding failed: ${embedResult.error || 'unknown'}. Chunks are saved, vectors will catch up.`;
+        break;
+      }
+
+      totalEmbedded += embedResult.vectors_embedded_now || 0;
+      const remaining = embedResult.vectors_remaining || 0;
+      const pct = 80 + Math.min(18, Math.round((1 - remaining / Math.max(1, remaining + totalEmbedded)) * 18));
+      progress.style.width = pct + '%';
+      console.log(`[Embed] Pass ${embedPass}:`, embedResult);
+
+      if (embedResult.status === 'complete') {
+        status.textContent = `✅ Done — ${totalAnalyzed} analyzed, ${totalCached} cached, ${totalFailed} failed. ${KNOWLEDGE.length} chunks, ${embedResult.vectors_total} vectors.`;
+        break;
+      }
+
+      // Partial — more to embed
+      status.textContent = `⏳ Embedding pass ${embedPass}: ${totalEmbedded} embedded, ${remaining} remaining…`;
+      await new Promise(r => setTimeout(r, 1000));
+    }
+
     progress.style.width = '100%';
-    status.textContent = `✅ Done in ${pass} pass(es) — ${totalAnalyzed} analyzed, ${totalCached} cached, ${totalFailed} failed. ${KNOWLEDGE.length} chunks.`;
     btn.textContent = '🔄 Re-analyze knowledge base';
   } catch (err) {
     status.textContent = '❌ Analysis failed: ' + err.message;
