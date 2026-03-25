@@ -42,10 +42,10 @@ steps:
   # ── 3. Install dependencies ──
   - script: |
       echo "Installing webapp/api dependencies..."
-      cd webapp/api && npm ci --ignore-scripts
+      cd webapp/api && npm install --ignore-scripts
       echo "Installing scripts dependencies..."
-      cd ../../scripts && npm ci --ignore-scripts
-    displayName: "npm ci"
+      cd ../../scripts && npm install --ignore-scripts
+    displayName: "npm install"
 
   # ── 4. Run analyze + embed (AzureCLI for SP env vars) ──
   - task: AzureCLI@2
