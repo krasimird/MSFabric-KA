@@ -878,7 +878,6 @@ module.exports = async function (context, req) {
   }
 
   // ── Test mode: incremental step testing ──
-  const body = req.body || {};
   if (body.test) {
     const step = body.step || "blob";
     try {
