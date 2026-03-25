@@ -920,11 +920,43 @@ module.exports = async function (context, req) {
             elapsed: elapsed(),
           }),
         };
+      } else if (step === "builders") {
+        // Exercise ALL builders without Claude API or embedding
+        const KB3 = await downloadJSON(RAW_BLOB, log);
+        log(`[${elapsed()}s] Downloaded raw export: ${Object.keys(KB3).length} keys`);
+        const il = buildItemLookup(KB3);
+        log(`[${elapsed()}s] Item lookup: ${Object.keys(il).length} items`);
+        const results = {};
+        const sb = (name, fn) => {
+          try { const r = fn(); results[name] = { count: r.length, ok: true }; return r; }
+          catch (e) { results[name] = { count: 0, ok: false, error: e.message, stack: (e.stack||'').slice(0,500) }; return []; }
+        };
+        sb('chains', () => buildExecutionChains(KB3));
+        sb('warehouse', () => buildWarehouseLineage(KB3));
+        const lhC = sb('lakehouse', () => buildLakehouseChunks(KB3, il));
+        const brC = sb('bronze', () => buildBronzeMetaChunks(KB3));
+        const smC = sb('semantic_model', () => buildSemanticModelChunks(KB3, il));
+        const piC = sb('pipeline', () => buildPipelineChunks(KB3, il));
+        const nbC = sb('notebook', () => buildNotebookChunks(KB3, il));
+        const rpC = sb('report', () => buildReportChunks(KB3, il));
+        const allEx = [...lhC,...brC,...smC,...piC,...nbC,...rpC];
+        sb('catalog', () => buildCatalogChunks(allEx));
+        // Also test chunkToText on a sample
+        let textOk = true, textErr = '';
+        try {
+          for (const c of allEx.slice(0, 50)) chunkToText(c);
+        } catch (e) { textOk = false; textErr = e.message; }
+        results.chunkToText = { ok: textOk, error: textErr };
+        context.res = {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "test_ok", step, builders: results, elapsed: elapsed() }),
+        };
       } else {
         context.res = {
           status: 400,
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ error: "Unknown step. Use: blob, download, apikey, full-dry" }),
+          body: JSON.stringify({ error: "Unknown step. Use: blob, download, apikey, full-dry, builders" }),
         };
       }
     } catch (err) {
