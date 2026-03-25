@@ -1277,3 +1277,21 @@ module.exports = async function (context, req) {
     };
   }
 };
+
+// ── Named exports for standalone pipeline script ──
+module.exports.buildExecutionChains = buildExecutionChains;
+module.exports.buildWarehouseLineage = buildWarehouseLineage;
+module.exports.buildItemLookup = buildItemLookup;
+module.exports.buildLakehouseChunks = buildLakehouseChunks;
+module.exports.buildBronzeMetaChunks = buildBronzeMetaChunks;
+module.exports.buildSemanticModelChunks = buildSemanticModelChunks;
+module.exports.buildPipelineChunks = buildPipelineChunks;
+module.exports.buildNotebookChunks = buildNotebookChunks;
+module.exports.buildReportChunks = buildReportChunks;
+module.exports.buildCatalogChunks = buildCatalogChunks;
+module.exports.assembleJSONL = assembleJSONL;
+module.exports.chunkToText = chunkToText;
+module.exports.chunkHash = chunkHash;
+module.exports.hashQuery = hashQuery;
+module.exports.analyzeQuery = analyzeQuery;
+module.exports.parseLineageJSON = parseLineageJSON;

@@ -1,0 +1,45 @@
+name: Analyze & Embed Knowledge Base
+
+on:
+  # Manual trigger from GitHub UI or API
+  workflow_dispatch:
+    inputs:
+      skip_embed:
+        description: 'Skip embedding phase (only rebuild JSONL)'
+        required: false
+        default: 'false'
+        type: boolean
+
+  # Scheduled: every day at 03:00 UTC (after Fabric export completes)
+  schedule:
+    - cron: '0 3 * * *'
+
+jobs:
+  analyze_and_embed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install --production
+        working-directory: webapp/api
+
+      - name: Run analyze & embed pipeline
+        env:
+          BLOB_CONNECTION_STRING: ${{ secrets.BLOB_CONNECTION_STRING }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          AZURE_OPENAI_KEY: ${{ secrets.AZURE_OPENAI_KEY }}
+          AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+        run: node scripts/analyze-and-embed.js
+
+      - name: Summary
+        if: always()
+        run: echo "Pipeline completed at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
