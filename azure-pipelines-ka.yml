@@ -1,0 +1,70 @@
+# ──────────────────────────────────────────────────────────────
+# Knowledge Assistant — Analyze & Embed Pipeline
+# Replaces the Azure Functions /api/analyze + /api/embed
+# which crash on SWA Free tier (45s timeout / limited RAM).
+#
+# Service Connection: ARM-KA-InternalApps (Inspirit Internal Apps sub)
+# Key Vault:          kv-ai-site-builder
+# Blob Storage:       sainspiritka / gendwh-exports
+# ──────────────────────────────────────────────────────────────
+
+trigger: none          # manual or scheduled only
+
+pr: none
+
+schedules:
+  - cron: "0 6 * * *"   # Daily 06:00 UTC (after Fabric notebook)
+    displayName: "Daily knowledge refresh"
+    branches:
+      include:
+        - main
+    always: true
+
+pool:
+  vmImage: "ubuntu-latest"
+
+steps:
+  # ── 1. Fetch secrets from Key Vault ──
+  - task: AzureKeyVault@2
+    displayName: "Fetch secrets from Key Vault"
+    inputs:
+      azureSubscription: "ARM-KA-InternalApps"
+      KeyVaultName: "kv-ai-site-builder"
+      SecretsFilter: "anthropicapikey,azure-openai-key,azure-openai-endpoint"
+      RunAsPreJob: false
+
+  # ── 2. Node.js 18 ──
+  - task: NodeTool@0
+    displayName: "Install Node.js 18"
+    inputs:
+      versionSpec: "18.x"
+
+  # ── 3. Install dependencies ──
+  - script: |
+      echo "Installing webapp/api dependencies..."
+      cd webapp/api && npm ci --ignore-scripts
+      echo "Installing scripts dependencies..."
+      cd ../../scripts && npm ci --ignore-scripts
+    displayName: "npm ci"
+
+  # ── 4. Run analyze + embed (AzureCLI for SP env vars) ──
+  - task: AzureCLI@2
+    displayName: "Run analyze & embed"
+    inputs:
+      azureSubscription: "ARM-KA-InternalApps"
+      scriptType: "bash"
+      scriptLocation: "inlineScript"
+      addSpnToEnvironment: true
+      inlineScript: |
+        # Map SP credentials for DefaultAzureCredential
+        export AZURE_CLIENT_ID=$servicePrincipalId
+        export AZURE_CLIENT_SECRET=$servicePrincipalKey
+        export AZURE_TENANT_ID=$tenantId
+        # Run pipeline script
+        node scripts/analyze-and-embed.js
+    env:
+      ANTHROPIC_API_KEY: $(anthropicapikey)
+      AZURE_OPENAI_KEY: $(azure-openai-key)
+      AZURE_OPENAI_ENDPOINT: $(azure-openai-endpoint)
+    timeoutInMinutes: 45
+

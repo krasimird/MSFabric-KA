@@ -1277,3 +1277,14 @@ module.exports = async function (context, req) {
     };
   }
 };
+
+// ── Exports for standalone pipeline script (scripts/analyze-and-embed.js) ──
+module.exports._internals = {
+  hashQuery, analyzeQuery, parseLineageJSON, sleep,
+  buildExecutionChains, buildWarehouseLineage, buildItemLookup,
+  buildLakehouseChunks, buildBronzeMetaChunks, buildSemanticModelChunks,
+  buildPipelineChunks, buildNotebookChunks, buildReportChunks,
+  buildCatalogChunks, assembleJSONL, chunkToText, chunkHash,
+  CONTAINER, RAW_BLOB, JSONL_BLOB, CACHE_BLOB, VECTORS_BLOB,
+  BATCH_SIZE, BATCH_DELAY_MS,
+};
