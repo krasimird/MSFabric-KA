@@ -968,11 +968,80 @@ module.exports = async function (context, req) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ status: "test_ok", step, builders: results, elapsed: elapsed() }),
         };
+      } else if (step === "jsonl") {
+        // Test JSONL assembly (builders + assembleJSONL) — no upload
+        const KB4 = await downloadJSON(RAW_BLOB, log);
+        const cache4 = await downloadJSONSafe(CACHE_BLOB, {}, log);
+        const queries4 = (KB4.metadata && KB4.metadata.queries) || [];
+        const lineage4 = {};
+        for (const q of queries4) {
+          const sql = q.source_query || "";
+          if (!sql || sql.length < 20) continue;
+          const qHash = hashQuery(sql);
+          if (cache4[qHash]) {
+            lineage4[q.target_table || q.meta_table || "unknown"] = {
+              layer: q.layer || "", mode: q.mode || "", fields: cache4[qHash]
+            };
+          }
+        }
+        const il4 = buildItemLookup(KB4);
+        const chains4 = buildExecutionChains(KB4);
+        const wh4 = buildWarehouseLineage(KB4);
+        const lh4 = buildLakehouseChunks(KB4, il4);
+        const br4 = buildBronzeMetaChunks(KB4);
+        const sm4 = buildSemanticModelChunks(KB4, il4);
+        const pi4 = buildPipelineChunks(KB4, il4);
+        const nb4 = buildNotebookChunks(KB4, il4);
+        const rp4 = buildReportChunks(KB4, il4);
+        const cat4 = buildCatalogChunks([...wh4,...lh4,...br4,...sm4,...pi4,...nb4,...rp4]);
+        log(`[${elapsed()}s] Assembling JSONL...`);
+        const jsonl4 = assembleJSONL(lineage4, chains4, wh4, [lh4,br4,sm4,pi4,nb4,rp4,cat4]);
+        const lc = jsonl4.split("\n").length;
+        context.res = {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "test_ok", step, jsonl_lines: lc, jsonl_bytes: jsonl4.length, elapsed: elapsed() }),
+        };
+      } else if (step === "upload") {
+        // Test JSONL assembly + actual blob upload
+        const KB5 = await downloadJSON(RAW_BLOB, log);
+        const cache5 = await downloadJSONSafe(CACHE_BLOB, {}, log);
+        const queries5 = (KB5.metadata && KB5.metadata.queries) || [];
+        const lineage5 = {};
+        for (const q of queries5) {
+          const sql = q.source_query || "";
+          if (!sql || sql.length < 20) continue;
+          const qHash = hashQuery(sql);
+          if (cache5[qHash]) {
+            lineage5[q.target_table || q.meta_table || "unknown"] = {
+              layer: q.layer || "", mode: q.mode || "", fields: cache5[qHash]
+            };
+          }
+        }
+        const il5 = buildItemLookup(KB5);
+        const chains5 = buildExecutionChains(KB5);
+        const wh5 = buildWarehouseLineage(KB5);
+        const lh5 = buildLakehouseChunks(KB5, il5);
+        const br5 = buildBronzeMetaChunks(KB5);
+        const sm5 = buildSemanticModelChunks(KB5, il5);
+        const pi5 = buildPipelineChunks(KB5, il5);
+        const nb5 = buildNotebookChunks(KB5, il5);
+        const rp5 = buildReportChunks(KB5, il5);
+        const cat5 = buildCatalogChunks([...wh5,...lh5,...br5,...sm5,...pi5,...nb5,...rp5]);
+        const jsonl5 = assembleJSONL(lineage5, chains5, wh5, [lh5,br5,sm5,pi5,nb5,rp5,cat5]);
+        log(`[${elapsed()}s] Uploading JSONL (${jsonl5.length} bytes)...`);
+        await uploadBlob(JSONL_BLOB, jsonl5, log);
+        log(`[${elapsed()}s] Upload done`);
+        context.res = {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "test_ok", step, jsonl_bytes: jsonl5.length, elapsed: elapsed() }),
+        };
       } else {
         context.res = {
           status: 400,
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ error: "Unknown step. Use: blob, download, apikey, full-dry, builders" }),
+          body: JSON.stringify({ error: "Unknown step. Use: blob, download, apikey, full-dry, builders, jsonl, upload" }),
         };
       }
     } catch (err) {

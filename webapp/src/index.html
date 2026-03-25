@@ -526,7 +526,7 @@ function populateStats() {
 async function runDiag() {
   const btn = document.getElementById('diagBtn');
   btn.textContent = '⏳…';
-  const steps = ['blob', 'download', 'apikey', 'full-dry', 'builders'];
+  const steps = ['blob', 'download', 'apikey', 'full-dry', 'builders', 'jsonl', 'upload'];
   const results = [];
   for (const step of steps) {
     console.log(`[DIAG] Testing step: ${step}…`);
