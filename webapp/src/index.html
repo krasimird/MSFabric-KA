@@ -269,7 +269,7 @@
     <div class="data-status" id="dataStatus"><span class="dot dot-loading"></span> Loading data…</div>
     <div style="padding:6px 16px 10px;border-top:1px solid var(--border);margin-top:auto;">
       <button id="analyzeBtn" onclick="startAnalysis()" style="background:none;border:none;color:var(--text-muted);font-size:11px;cursor:pointer;padding:2px 0;opacity:.7;transition:opacity .15s;" onmouseenter="this.style.opacity='1'" onmouseleave="this.style.opacity='.7'" title="Re-analyze knowledge base on server">🔄 Re-analyze knowledge base</button>
-      <button onclick="fetch('/api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ping:true})}).then(r=>r.text()).then(t=>{console.log('PING:',t);alert(t)}).catch(e=>alert('ERR:'+e))" style="background:none;border:none;color:var(--text-muted);font-size:9px;cursor:pointer;padding:1px 0;opacity:.5;" title="Diagnostic ping">🏓 Ping</button>
+      <button onclick="runDiag()" id="diagBtn" style="background:none;border:none;color:var(--text-muted);font-size:9px;cursor:pointer;padding:1px 0;opacity:.5;" title="Run step-by-step diagnostic">🔬 Diagnose</button>
     </div>
   </aside>
 
@@ -520,6 +520,57 @@ function populateStats() {
   }
   s('statPipelines', pipelines);
   s('statDefinitions', definitions);
+}
+
+// ── Diagnostic: run each analyze step individually ──────────
+async function runDiag() {
+  const btn = document.getElementById('diagBtn');
+  btn.textContent = '⏳…';
+  const steps = ['blob', 'download', 'apikey', 'full-dry', 'builders'];
+  const results = [];
+  for (const step of steps) {
+    console.log(`[DIAG] Testing step: ${step}…`);
+    try {
+      const resp = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ test: true, step })
+      });
+      const text = await resp.text();
+      let data;
+      try { data = JSON.parse(text); } catch { data = { raw: text.slice(0, 500) }; }
+      const ok = resp.ok;
+      results.push({ step, ok, status: resp.status, data });
+      console.log(`[DIAG] ${step}: ${ok ? '✅' : '❌'} (${resp.status})`, data);
+      if (!ok) break; // Stop on first failure
+    } catch (err) {
+      results.push({ step, ok: false, error: err.message });
+      console.error(`[DIAG] ${step}: ❌ NETWORK ERROR:`, err.message);
+      break;
+    }
+  }
+  // Now test the real analyze call (non-test)
+  if (results.every(r => r.ok)) {
+    console.log('[DIAG] All test steps passed. Testing real analyze…');
+    try {
+      const resp = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}'
+      });
+      const text = await resp.text();
+      let data;
+      try { data = JSON.parse(text); } catch { data = { raw: text.slice(0, 500) }; }
+      results.push({ step: 'REAL_ANALYZE', ok: resp.ok, status: resp.status, data });
+      console.log(`[DIAG] REAL_ANALYZE: ${resp.ok ? '✅' : '❌'} (${resp.status})`, data);
+    } catch (err) {
+      results.push({ step: 'REAL_ANALYZE', ok: false, error: err.message });
+      console.error('[DIAG] REAL_ANALYZE: ❌', err.message);
+    }
+  }
+  btn.textContent = '🔬 Diagnose';
+  const summary = results.map(r => `${r.ok?'✅':'❌'} ${r.step} (${r.status||'err'})`).join('\n');
+  alert(summary);
 }
 
 // ── AI Analysis trigger (server-side) ─────────────────────────
