@@ -269,6 +269,7 @@
     <div class="data-status" id="dataStatus"><span class="dot dot-loading"></span> Loading data…</div>
     <div style="padding:6px 16px 10px;border-top:1px solid var(--border);margin-top:auto;">
       <button id="analyzeBtn" onclick="startAnalysis()" style="background:none;border:none;color:var(--text-muted);font-size:11px;cursor:pointer;padding:2px 0;opacity:.7;transition:opacity .15s;" onmouseenter="this.style.opacity='1'" onmouseleave="this.style.opacity='.7'" title="Re-analyze knowledge base on server">🔄 Re-analyze knowledge base</button>
+      <button onclick="fetch('/api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ping:true})}).then(r=>r.text()).then(t=>{console.log('PING:',t);alert(t)}).catch(e=>alert('ERR:'+e))" style="background:none;border:none;color:var(--text-muted);font-size:9px;cursor:pointer;padding:1px 0;opacity:.5;" title="Diagnostic ping">🏓 Ping</button>
     </div>
   </aside>
 

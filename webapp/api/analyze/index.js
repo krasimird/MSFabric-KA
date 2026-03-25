@@ -845,6 +845,23 @@ function assembleJSONL(lineageByTable, chains, warehouseChunks, extraChunkArrays
 // MAIN HANDLER
 // ═══════════════════════════════════════════════════════════════
 module.exports = async function (context, req) {
+  // ── Diagnostic ping — returns immediately, no deps ──
+  const body = req.body || {};
+  if (body.ping) {
+    context.res = {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        pong: true,
+        node: process.version,
+        moduleLoadError: moduleLoadError,
+        hasFetch: typeof fetch !== "undefined",
+        env_keys: Object.keys(process.env).filter(k => k.startsWith("BLOB") || k.startsWith("AZURE") || k.startsWith("ANTHRO")).sort(),
+      }),
+    };
+    return;
+  }
+
   context.log("Analyze function invoked");
   const log = (...args) => context.log.info(...args);
   const startTime = Date.now();
