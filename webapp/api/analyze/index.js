@@ -1015,23 +1015,25 @@ module.exports = async function (context, req) {
     }
     log(`[${elapsed()}s] ${skipped} queries already cached, ${queries.length - skipped} remaining.`);
 
-    // Second pass: analyze uncached queries with timeout guard
-    for (let i = 0; i < queries.length; i += BATCH_SIZE) {
-      // ── Hard timeout check ──
+    // Second pass: analyze ONLY uncached queries (skip cached to avoid wasting time on sleep)
+    const uncachedQueries = queries.filter(q => {
+      const sql = q.source_query || "";
+      if (!sql || sql.length < 20) return false;
+      return !cache[hashQuery(sql)];
+    });
+    log(`[${elapsed()}s] ${uncachedQueries.length} uncached queries to analyze with Claude.`);
+
+    for (let i = 0; i < uncachedQueries.length; i += BATCH_SIZE) {
       if (Date.now() - startTime > TIMEOUT_MS) {
         timedOut = true;
-        lastProcessedIndex = i;
         log(`[${elapsed()}s] ⏱ Timeout approaching — stopping after ${i} queries.`);
         break;
       }
 
-      const batch = queries.slice(i, i + BATCH_SIZE);
+      const batch = uncachedQueries.slice(i, i + BATCH_SIZE);
       const promises = batch.map(async (q) => {
         const sql = q.source_query || "";
-        if (!sql || sql.length < 20) return;
         const qHash = hashQuery(sql);
-        if (cache[qHash]) return; // already handled in first pass
-
         const targetTable = q.target_table || q.meta_table || "unknown";
         const layer = q.layer || "";
         const mode = q.mode || "";
@@ -1058,17 +1060,15 @@ module.exports = async function (context, req) {
       });
 
       await Promise.all(promises);
-      lastProcessedIndex = Math.min(i + BATCH_SIZE, queries.length);
-      log(`[${elapsed()}s] Progress: ${lastProcessedIndex}/${queries.length} (new=${analyzed}, cached=${skipped}, failed=${failed})`);
+      log(`[${elapsed()}s] Progress: ${Math.min(i + BATCH_SIZE, uncachedQueries.length)}/${uncachedQueries.length} uncached (new=${analyzed}, failed=${failed})`);
 
-      // Check timeout again after batch completes
       if (Date.now() - startTime > TIMEOUT_MS) {
         timedOut = true;
         log(`[${elapsed()}s] ⏱ Timeout after batch — stopping.`);
         break;
       }
 
-      if (i + BATCH_SIZE < queries.length) await sleep(BATCH_DELAY_MS);
+      if (i + BATCH_SIZE < uncachedQueries.length) await sleep(BATCH_DELAY_MS);
     }
 
     // 5. Save cache (always — even on partial runs)
@@ -1148,11 +1148,15 @@ module.exports = async function (context, req) {
     const ts = new Date().toISOString().replace(/[:.]/g, "-");
     await uploadBlob(`archive/${ts}_knowledge.jsonl`, jsonl, log);
 
-    // ── Step 8: Embed new/changed chunks ─────────────────────
+    // ── Step 8: Embed new/changed chunks (only if enough time left) ──
     let embeddedCount = 0;
     let embedSkipped = 0;
     let embedError = null;
-    try {
+    const timeLeftMs = TIMEOUT_MS - (Date.now() - startTime);
+    if (timeLeftMs < 8000) {
+      log(`[${elapsed()}s] Step 8: Skipping embedding (only ${(timeLeftMs/1000).toFixed(1)}s left, need 8s min). Will embed on next run.`);
+      embedError = "skipped_time_pressure";
+    } else try {
       const openaiCreds = await getOpenAICredentials(log);
       if (!openaiCreds) throw new Error("Azure OpenAI credentials not available");
 
