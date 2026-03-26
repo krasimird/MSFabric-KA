@@ -248,17 +248,29 @@ async function main() {
   // Diff: find chunks needing embedding
   const toEmbed = [];
   const newHashes = new Set();
+  const chunkByHash = new Map();
   for (const chunk of newChunks) {
     const hash = chunkHash(chunk);
     newHashes.add(hash);
+    chunkByHash.set(hash, chunk);
     if (!existingMap.has(hash)) toEmbed.push({ chunk, hash, text: chunkToText(chunk) });
   }
   log(`To embed: ${toEmbed.length}, unchanged: ${newChunks.length - toEmbed.length}`);
 
-  // Keep only vectors for chunks still present
+  // Keep only vectors for chunks still present — re-enrich with current metadata
+  const META_KEYS = ["table", "model_name", "pipeline", "report_name", "layer", "target_field", "source_table", "workspace", "zone", "warehouse_name", "lakehouse", "table_name", "warehouse_id", "definition_status"];
   const outputLines = [];
   for (const [hash, line] of existingMap) {
-    if (newHashes.has(hash)) outputLines.push(line);
+    if (newHashes.has(hash)) {
+      const vec = JSON.parse(line);
+      const chunk = chunkByHash.get(hash);
+      if (chunk) {
+        for (const k of META_KEYS) {
+          if (chunk[k] !== undefined) vec[k] = chunk[k];
+        }
+      }
+      outputLines.push(JSON.stringify(vec));
+    }
   }
 
   // Embed in batches — no timeout
@@ -271,8 +283,14 @@ async function main() {
       for (let j = 0; j < batch.length; j++) {
         const { chunk, hash } = batch[j];
         const vec = { chunk_hash: hash, chunk_type: chunk.type, id: chunk.id || "", embedding: embeddings[j] };
-        for (const k of ["table", "model_name", "pipeline", "report_name", "layer", "target_field", "source_table"]) {
-          if (chunk[k]) vec[k] = chunk[k];
+        for (const k of [
+          "table", "model_name", "pipeline", "report_name",
+          "layer", "target_field", "source_table",
+          "workspace", "zone", "warehouse_name",
+          "lakehouse", "table_name", "warehouse_id",
+          "definition_status"
+        ]) {
+          if (chunk[k] !== undefined) vec[k] = chunk[k];
         }
         vec.text = batch[j].text;
         outputLines.push(JSON.stringify(vec));
