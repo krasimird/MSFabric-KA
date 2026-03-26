@@ -530,76 +530,100 @@ function _parseTmdlRelationships(payload) {
 // ── Semantic Model chunks ───────────────────────────────────
 function buildSemanticModelChunks(KB, itemLookup) {
   const chunks = [];
-  if (!KB.definitions) return chunks;
-  for (const [itemId, defParts] of Object.entries(KB.definitions)) {
-    const info = itemLookup[itemId] || {};
+  const processedIds = new Set();
+
+  // First pass: process models that have definitions
+  if (KB.definitions) {
+    for (const [itemId, defParts] of Object.entries(KB.definitions)) {
+      const info = itemLookup[itemId] || {};
+      if (info.type !== 'SemanticModel') continue;
+      if (!Array.isArray(defParts)) continue;
+      const modelName = info.name || itemId;
+      const wsName = info.workspace || '';
+
+      const tablesMap = {};
+      let relationships = [];
+      for (const part of defParts) {
+        const p = part.path || '';
+        const payload = part.payload || '';
+        if (p.startsWith('definition/tables/') && p.endsWith('.tmdl')) {
+          const parsed = _parseTmdlTable(payload);
+          if (!parsed) continue;
+          if (parsed.name.startsWith('LocalDateTable') || parsed.name.startsWith('DateTableTemplate')) continue;
+          tablesMap[parsed.name] = parsed;
+        }
+        if (p.endsWith('relationships.tmdl')) {
+          relationships = _parseTmdlRelationships(payload);
+        }
+      }
+
+      const tableNames = Object.keys(tablesMap);
+      if (tableNames.length === 0) continue;
+      processedIds.add(itemId);
+
+      const allMeasures = [];
+      for (const [tbl, inf] of Object.entries(tablesMap)) {
+        if (inf.measures.length > 0) allMeasures.push(...inf.measures);
+      }
+      const totalCols = Object.values(tablesMap).reduce((s, t) => s + t.columns.length, 0);
+
+      // Overview chunk
+      chunks.push({
+        type: 'semantic_model_overview', id: modelName,
+        model_name: modelName, model_id: itemId, workspace: wsName,
+        definition_status: 'ok',
+        table_count: tableNames.length, measure_count: allMeasures.length,
+        column_count: totalCols, relationship_count: relationships.length,
+        tables: Array.from(tableNames),
+        tables_detail: Object.fromEntries(Object.entries(tablesMap).map(([k, v]) => [k, {
+          columns: v.columns, measure_count: v.measures.length, isCalculated: v.isCalculated,
+        }])),
+        summary: `Semantic Model ${modelName}: ${tableNames.length} tables, ${totalCols} columns, ${allMeasures.length} measures, ${relationships.length} relationships`,
+      });
+
+      // Per-table measures chunks
+      for (const [tblName, tblInfo] of Object.entries(tablesMap)) {
+        if (tblInfo.measures.length === 0) continue;
+        const measText = tblInfo.measures.map(m => `${m.name} = ${m.expression}`).join('\n');
+        chunks.push({
+          type: 'semantic_model_measures', id: `${modelName}::${tblName}`,
+          model_name: modelName, model_id: itemId, table_name: tblName,
+          measures: tblInfo.measures,
+          summary: `Measures in ${modelName}.${tblName}: ${tblInfo.measures.map(m => m.name).join(', ')}`,
+          description: measText.slice(0, 3000),
+        });
+      }
+
+      // Relationships chunk
+      if (relationships.length > 0) {
+        const relText = relationships.map(r => `${r.from_table}.${r.from_column} → ${r.to_table}.${r.to_column}`).join('\n');
+        chunks.push({
+          type: 'semantic_model_relationships', id: `${modelName}::relationships`,
+          model_name: modelName, model_id: itemId,
+          relationships: relationships,
+          summary: `Relationships in ${modelName}: ${relationships.length} relationships`,
+          description: relText.slice(0, 3000),
+        });
+      }
+    }
+  }
+
+  // Second pass: create stub chunks for SemanticModel items missing from definitions
+  for (const [itemId, info] of Object.entries(itemLookup)) {
     if (info.type !== 'SemanticModel') continue;
-    if (!Array.isArray(defParts)) continue;
+    if (processedIds.has(itemId)) continue;
     const modelName = info.name || itemId;
     const wsName = info.workspace || '';
-
-    const tablesMap = {};
-    let relationships = [];
-    for (const part of defParts) {
-      const p = part.path || '';
-      const payload = part.payload || '';
-      if (p.startsWith('definition/tables/') && p.endsWith('.tmdl')) {
-        const parsed = _parseTmdlTable(payload);
-        if (!parsed) continue;
-        if (parsed.name.startsWith('LocalDateTable') || parsed.name.startsWith('DateTableTemplate')) continue;
-        tablesMap[parsed.name] = parsed;
-      }
-      if (p.endsWith('relationships.tmdl')) {
-        relationships = _parseTmdlRelationships(payload);
-      }
-    }
-
-    const tableNames = Object.keys(tablesMap);
-    if (tableNames.length === 0) continue;
-    const allMeasures = [];
-    for (const [tbl, inf] of Object.entries(tablesMap)) {
-      if (inf.measures.length > 0) allMeasures.push(...inf.measures);
-    }
-    const totalCols = Object.values(tablesMap).reduce((s, t) => s + t.columns.length, 0);
-
-    // Overview chunk
     chunks.push({
       type: 'semantic_model_overview', id: modelName,
       model_name: modelName, model_id: itemId, workspace: wsName,
-      table_count: tableNames.length, measure_count: allMeasures.length,
-      column_count: totalCols, relationship_count: relationships.length,
-      tables: Array.from(tableNames),
-      tables_detail: Object.fromEntries(Object.entries(tablesMap).map(([k, v]) => [k, {
-        columns: v.columns, measure_count: v.measures.length, isCalculated: v.isCalculated,
-      }])),
-      summary: `Semantic Model ${modelName}: ${tableNames.length} tables, ${totalCols} columns, ${allMeasures.length} measures, ${relationships.length} relationships`,
+      definition_status: 'error',
+      table_count: 0, measure_count: 0, column_count: 0, relationship_count: 0,
+      tables: [], tables_detail: {},
+      summary: `Semantic Model ${modelName}: definition extraction failed — this model may be broken or a legacy item`,
     });
-
-    // Per-table measures chunks
-    for (const [tblName, tblInfo] of Object.entries(tablesMap)) {
-      if (tblInfo.measures.length === 0) continue;
-      const measText = tblInfo.measures.map(m => `${m.name} = ${m.expression}`).join('\n');
-      chunks.push({
-        type: 'semantic_model_measures', id: `${modelName}::${tblName}`,
-        model_name: modelName, model_id: itemId, table_name: tblName,
-        measures: tblInfo.measures,
-        summary: `Measures in ${modelName}.${tblName}: ${tblInfo.measures.map(m => m.name).join(', ')}`,
-        description: measText.slice(0, 3000),
-      });
-    }
-
-    // Relationships chunk
-    if (relationships.length > 0) {
-      const relText = relationships.map(r => `${r.from_table}.${r.from_column} → ${r.to_table}.${r.to_column}`).join('\n');
-      chunks.push({
-        type: 'semantic_model_relationships', id: `${modelName}::relationships`,
-        model_name: modelName, model_id: itemId,
-        relationships: relationships,
-        summary: `Relationships in ${modelName}: ${relationships.length} relationships`,
-        description: relText.slice(0, 3000),
-      });
-    }
   }
+
   return chunks;
 }
 
@@ -777,11 +801,18 @@ function buildCatalogChunks(allChunks) {
   // Semantic models
   const smOverviews = grouped['semantic_model_overview'] || [];
   if (smOverviews.length > 0) {
+    const smOk = smOverviews.filter(s => s.definition_status !== 'error');
+    const smErr = smOverviews.filter(s => s.definition_status === 'error');
+    let smSummary = `All Semantic Models (${smOverviews.length}): ${smOk.map(s => `${s.model_name} (${s.table_count} tables, ${s.measure_count} measures)`).join('; ')}`;
+    if (smErr.length > 0) {
+      smSummary += `. ${smErr.length} model(s) have extraction errors and may be broken or legacy items: ${smErr.map(s => s.model_name).join(', ')}`;
+    }
     catalogs.push({
       type: 'catalog', id: 'catalog::semantic_models',
       category: 'semantic_models', item_count: smOverviews.length,
       items: smOverviews.map(s => s.model_name).sort(),
-      summary: `All Semantic Models (${smOverviews.length}): ${smOverviews.map(s => `${s.model_name} (${s.table_count} tables, ${s.measure_count} measures)`).join('; ')}`,
+      error_models: smErr.map(s => s.model_name).sort(),
+      summary: smSummary,
     });
   }
   // Pipelines, Notebooks, Reports
