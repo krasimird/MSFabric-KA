@@ -180,6 +180,12 @@
       min-height: 44px; max-height: 120px; outline: none; transition: border-color .15s;
     }
     .input-area textarea:focus { border-color: var(--teal); }
+    #contextLevel {
+      height: 44px; border: 1px solid var(--border); border-radius: 8px;
+      padding: 0 10px; font-size: 13px; font-family: inherit; background: var(--surface);
+      cursor: pointer; outline: none; transition: border-color .15s; min-width: 140px;
+    }
+    #contextLevel:focus { border-color: var(--teal); }
     .send-btn {
       background: var(--teal); color: #fff; border: none; border-radius: 8px;
       padding: 10px 20px; font-size: 14px; font-weight: 600; cursor: pointer;
@@ -187,6 +193,16 @@
     }
     .send-btn:hover { background: var(--teal-dark); }
     .send-btn:disabled { opacity: .5; cursor: not-allowed; }
+    .context-badge {
+      display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 10px;
+      background: var(--teal); color: #fff; margin-bottom: 4px; font-weight: 600;
+    }
+    .context-badge.inventory { background: #6c5ce7; }
+    .context-badge.lineage { background: #e17055; }
+    .context-badge.warehouse { background: #00b894; }
+    .context-badge.bi { background: #0984e3; }
+    .context-badge.orchestration { background: #636e72; }
+    .context-badge.bronze_meta { background: #cd6133; }
 
     
     /* ── Pipeline Vis.js Graph ────────────────────────────────── */
@@ -355,6 +371,16 @@
 
     <div class="input-area">
       <textarea id="userInput" placeholder="Ask about your data warehouse… (Enter to send, Shift+Enter for new line)" rows="1"></textarea>
+      <select id="contextLevel" title="Context routing level">
+        <option value="">🤖 Auto</option>
+        <option value="FULL">🌐 Full</option>
+        <option value="INVENTORY">📊 Inventory</option>
+        <option value="LINEAGE">🔗 Lineage</option>
+        <option value="WAREHOUSE">🏭 Warehouse</option>
+        <option value="BI">📈 BI / Reports</option>
+        <option value="ORCHESTRATION">⚙️ Orchestration</option>
+        <option value="BRONZE_META">🥉 Bronze Meta</option>
+      </select>
       <button class="send-btn" id="sendBtn">Send</button>
     </div>
   </div>
@@ -3071,10 +3097,14 @@ async function sendMessage(text) {
 
   try {
     sendBtn.disabled = true;
+    const ctxLevel = document.getElementById('contextLevel').value;
+    const reqBody = { question: text, chatHistory };
+    if (ctxLevel) reqBody.contextLevel = ctxLevel;
+
     const resp = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question: text, chatHistory })
+      body: JSON.stringify(reqBody)
     });
     const data = await resp.json();
     spinner.remove();
@@ -3089,7 +3119,19 @@ async function sendMessage(text) {
         const out = data.usage.output_tokens || 0;
         usageInfo = recordUsage(inp, out);
       }
-      appendMessage('assistant', reply, usageInfo);
+      // Build classification badge
+      let contextInfo = '';
+      if (data._rag) {
+        const cls = (data._rag.classification || '').toLowerCase();
+        const note = data._rag.context_note || '';
+        if (cls && cls !== 'full') {
+          contextInfo = `<span class="context-badge ${cls}">${data._rag.classification}</span> `;
+        }
+        if (note) {
+          contextInfo += `<span style="font-size:11px;color:var(--muted);">${note}</span>`;
+        }
+      }
+      appendMessage('assistant', reply, usageInfo, contextInfo);
       chatHistory.push({ role: 'assistant', content: reply });
     }
   } catch (err) {
@@ -3101,7 +3143,7 @@ async function sendMessage(text) {
   }
 }
 
-function appendMessage(role, content, usageInfo) {
+function appendMessage(role, content, usageInfo, contextInfo) {
   const div = document.createElement('div');
   div.className = `message ${role}`;
   const label = document.createElement('div');
@@ -3110,7 +3152,14 @@ function appendMessage(role, content, usageInfo) {
   const bubble = document.createElement('div');
   bubble.className = 'msg-bubble';
   if (role === 'assistant') {
-    bubble.innerHTML = marked.parse(content);
+    // Show context routing badge above the reply
+    if (contextInfo) {
+      const ctxDiv = document.createElement('div');
+      ctxDiv.style.marginBottom = '6px';
+      ctxDiv.innerHTML = contextInfo;
+      bubble.appendChild(ctxDiv);
+    }
+    bubble.innerHTML += marked.parse(content);
     // Render Mermaid diagrams: find <code class="language-mermaid"> blocks
     bubble.querySelectorAll('pre code.language-mermaid').forEach(codeEl => {
       const src = codeEl.textContent;
