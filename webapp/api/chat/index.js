@@ -20,6 +20,8 @@ try {
 
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
 const MODEL = "claude-sonnet-4-6";
+const CLASSIFIER_MODEL = "claude-sonnet-4-6";
+const CLASSIFIER_MAX_TOKENS = 128;
 const DEFAULT_MAX_TOKENS = 4096;
 const MAX_ALLOWED_TOKENS = 16384;
 
@@ -29,6 +31,30 @@ const CONTAINER = "gendwh-exports";
 const VECTORS_BLOB = "latest/gendwh_vectors.jsonl";
 const EMBEDDING_MODEL = "text-embedding-ada-002";
 const TOP_K = 15;
+
+// ── Context routing: chunk type filters per classification ──
+const CONTEXT_LEVELS = {
+  FULL:          null, // no filter — use all chunks
+  INVENTORY:     null, // special: direct metadata, no vector search
+  LINEAGE:       new Set(["field_detail", "table_lineage", "execution_chain", "lakehouse_table", "bronze_meta"]),
+  WAREHOUSE:     new Set(["warehouse_table", "warehouse_view", "warehouse_sproc", "field_detail", "table_lineage"]),
+  BI:            new Set(["report_overview", "semantic_model_overview", "semantic_model_measures", "semantic_model_relationships"]),
+  ORCHESTRATION: new Set(["pipeline_overview", "notebook_overview", "execution_chain"]),
+  BRONZE_META:   new Set(["bronze_meta", "lakehouse_table"]),
+};
+
+const CLASSIFIER_PROMPT = `Classify this data warehouse question into exactly ONE category. Reply with ONLY the category name, nothing else.
+
+Categories:
+- INVENTORY: counting items, listing all items, "how many", "list all", "show all workspaces/tables/pipelines/reports"
+- LINEAGE: field lineage, data flow, transformation, source-to-target mapping, "where does X come from"
+- WAREHOUSE: Platinum/DWH layer, warehouse tables, views, stored procedures
+- BI: reports, semantic models, DAX measures, Power BI, dashboards
+- ORCHESTRATION: pipelines, notebooks, scheduling, execution chains, activities
+- BRONZE_META: bronze metadata, landing tables, source systems, ingestion
+- FULL: general/broad questions, architecture overview, or doesn't fit above
+
+Question: `;
 
 // ── Cached state (per function instance) ─────────────────────
 let cachedApiKey = null;
@@ -144,7 +170,7 @@ function retrieveTopK(queryEmbedding, vectors, k) {
 }
 
 // ── Claude call ──────────────────────────────────────────────
-async function callClaude(apiKey, messages, system, maxTokens) {
+async function callClaude(apiKey, messages, system, maxTokens, model) {
   const response = await fetch(ANTHROPIC_API_URL, {
     method: "POST",
     headers: {
@@ -152,10 +178,88 @@ async function callClaude(apiKey, messages, system, maxTokens) {
       "x-api-key": apiKey,
       "anthropic-version": "2023-06-01",
     },
-    body: JSON.stringify({ model: MODEL, max_tokens: maxTokens, system, messages }),
+    body: JSON.stringify({ model: model || MODEL, max_tokens: maxTokens, system, messages }),
   });
   const data = await response.json();
   return { status: response.ok ? 200 : response.status, data };
+}
+
+// ── Question classifier ─────────────────────────────────────
+async function classifyQuestion(apiKey, question, log) {
+  try {
+    const { status, data } = await callClaude(
+      apiKey,
+      [{ role: "user", content: CLASSIFIER_PROMPT + question }],
+      "Respond with exactly one word: FULL, INVENTORY, LINEAGE, WAREHOUSE, BI, ORCHESTRATION, or BRONZE_META.",
+      CLASSIFIER_MAX_TOKENS,
+      CLASSIFIER_MODEL
+    );
+    if (status !== 200) { log("[CLASSIFY] API error, defaulting to FULL"); return "FULL"; }
+    const raw = ((data.content || [])[0] || {}).text || "";
+    const level = raw.trim().toUpperCase().replace(/[^A-Z_]/g, "");
+    if (CONTEXT_LEVELS.hasOwnProperty(level)) return level;
+    log(`[CLASSIFY] Unknown level "${raw}", defaulting to FULL`);
+    return "FULL";
+  } catch (err) {
+    log("[CLASSIFY] Error: " + err.message + ", defaulting to FULL");
+    return "FULL";
+  }
+}
+
+// ── INVENTORY handler: direct metadata answers ──────────────
+function handleInventory(question, vectors, log) {
+  const q = question.toLowerCase();
+  // Build metadata summaries from vector chunks
+  const byType = {};
+  const byWorkspace = {};
+  for (const v of vectors) {
+    const t = v.chunk_type || "unknown";
+    byType[t] = (byType[t] || 0) + 1;
+    const ws = v.workspace || "";
+    if (ws) {
+      if (!byWorkspace[ws]) byWorkspace[ws] = {};
+      byWorkspace[ws][t] = (byWorkspace[ws][t] || 0) + 1;
+    }
+  }
+
+  // Detect workspace filter
+  const wsNames = Object.keys(byWorkspace);
+  let filterWs = null;
+  for (const ws of wsNames) {
+    if (q.includes(ws.toLowerCase())) { filterWs = ws; break; }
+  }
+
+  // Build answer parts
+  const parts = [];
+  const source = filterWs ? byWorkspace[filterWs] || {} : byType;
+  const label = filterWs ? ` in workspace **${filterWs}**` : "";
+
+  // Map chunk types to user-friendly names
+  const typeLabels = {
+    lakehouse_table: "Lakehouse Tables", warehouse_table: "Warehouse Tables",
+    warehouse_view: "Warehouse Views", warehouse_sproc: "Warehouse Stored Procedures",
+    field_detail: "Field Lineage Entries", table_lineage: "Table Lineage Entries",
+    pipeline_overview: "Pipelines", notebook_overview: "Notebooks",
+    report_overview: "Reports", semantic_model_overview: "Semantic Models",
+    semantic_model_measures: "SM Measures", semantic_model_relationships: "SM Relationships",
+    execution_chain: "Execution Chains", bronze_meta: "Bronze Metadata Entries",
+    catalog: "Catalog Entries",
+  };
+
+  parts.push(`## Inventory${label}\n`);
+  let total = 0;
+  for (const [t, count] of Object.entries(source).sort((a, b) => b[1] - a[1])) {
+    const name = typeLabels[t] || t;
+    parts.push(`- **${name}**: ${count}`);
+    total += count;
+  }
+  parts.push(`\n**Total chunks**: ${total}`);
+  if (!filterWs && wsNames.length > 0) {
+    parts.push(`\n**Workspaces**: ${wsNames.sort().join(", ")}`);
+  }
+
+  log(`[INVENTORY] Direct answer: ${total} chunks, ${wsNames.length} workspaces`);
+  return parts.join("\n");
 }
 
 // ═════════════════════════════════════════════════════════════
@@ -203,56 +307,111 @@ module.exports = async function (context, req) {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // RAG MODE — Semantic Search
+  // RAG MODE — Hierarchical Context Routing
   // ═══════════════════════════════════════════════════════════
   try {
     const question = body.question.trim();
     const chatHistory = Array.isArray(body.chatHistory) ? body.chatHistory : [];
+    const requestedLevel = (body.contextLevel || "").toUpperCase();
     log(`[RAG] Question: "${question.slice(0, 100)}..."`);
 
-    // 1. Get OpenAI credentials
+    // 1. Load vectors (cached in-memory with TTL)
+    const vectors = await loadVectors(log);
+
+    // 2. Classify the question (or use explicit override)
+    let classification;
+    if (requestedLevel && CONTEXT_LEVELS.hasOwnProperty(requestedLevel)) {
+      classification = requestedLevel;
+      log(`[RAG] Context level override: ${classification}`);
+    } else {
+      classification = await classifyQuestion(apiKey, question, log);
+      log(`[RAG] Classified as: ${classification}`);
+    }
+
+    // 3. INVENTORY — direct metadata answer, no vector search needed
+    if (classification === "INVENTORY") {
+      const inventoryAnswer = handleInventory(question, vectors, log);
+      // Still call Claude for a polished answer with the inventory data as context
+      const messages = [];
+      const historySlice = chatHistory.slice(-10);
+      for (const msg of historySlice) {
+        if (msg.role && msg.content) messages.push({ role: msg.role, content: msg.content });
+      }
+      messages.push({ role: "user", content: question });
+      const systemPrompt = SYSTEM_PROMPT + "\n\nCONTEXT (direct metadata inventory):\n" + inventoryAnswer;
+      const { status, data } = await callClaude(apiKey, messages, systemPrompt, DEFAULT_MAX_TOKENS);
+      const responseBody = { ...data };
+      responseBody._rag = {
+        classification,
+        chunks_retrieved: 0,
+        vectors_total: vectors.length,
+        context_note: "Direct metadata inventory — no vector search used",
+      };
+      context.res = { status, headers: { "Content-Type": "application/json" }, body: responseBody };
+      return;
+    }
+
+    // 4. Get OpenAI credentials for embedding
     const openaiCreds = await getOpenAICredentials(log);
     if (!openaiCreds) throw new Error("Azure OpenAI credentials not available");
 
-    // 2. Embed the question
+    // 5. Embed the question
     const queryEmbedding = await embedQuery(question, openaiCreds.apiKey, openaiCreds.endpoint);
     log(`[RAG] Query embedded (${queryEmbedding.length} dims)`);
 
-    // 3. Load vectors (cached in-memory with TTL)
-    const vectors = await loadVectors(log);
+    // 6. Filter vectors by classification
+    const typeFilter = CONTEXT_LEVELS[classification];
+    const searchPool = typeFilter
+      ? vectors.filter(v => typeFilter.has(v.chunk_type))
+      : vectors;
+    log(`[RAG] Search pool: ${searchPool.length}/${vectors.length} vectors (filter: ${classification})`);
 
-    // 4. Cosine similarity → top-K
-    const topChunks = retrieveTopK(queryEmbedding, vectors, TOP_K);
+    // 7. Cosine similarity → top-K on filtered pool
+    const topChunks = retrieveTopK(queryEmbedding, searchPool, TOP_K);
     log(`[RAG] Top ${topChunks.length} chunks (scores: ${topChunks.map(c => c.score.toFixed(3)).join(", ")})`);
 
-    // 5. Build context from chunk texts
+    // 8. Build context from chunk texts
     const contextParts = topChunks.map((c, i) =>
       `[${i + 1}] (score=${c.score.toFixed(3)}, type=${c.chunk_type || "?"}, id=${c.id || "?"}):\n${c.text || "(no text)"}`
     );
     const contextStr = contextParts.join("\n---\n");
 
-    // 6. Build system prompt
-    const systemPrompt = SYSTEM_PROMPT + "\n\nCONTEXT:\n" + contextStr;
+    // 9. Build system prompt with classification hint
+    let systemPrompt = SYSTEM_PROMPT;
+    if (classification === "LINEAGE") {
+      systemPrompt += "\n\nIMPORTANT: This is a lineage question. Context has been filtered to field-level lineage, table lineage, and related chunks. Trace data flow layer by layer: Bronze → Silver → Gold → Platinum.";
+    } else if (classification === "WAREHOUSE") {
+      systemPrompt += "\n\nIMPORTANT: This is a Warehouse/Platinum layer question. Context has been filtered to warehouse tables, views, stored procedures, and related lineage.";
+    } else if (classification === "BI") {
+      systemPrompt += "\n\nIMPORTANT: This is a BI/reporting question. Context has been filtered to reports, semantic models, measures, and relationships.";
+    } else if (classification === "ORCHESTRATION") {
+      systemPrompt += "\n\nIMPORTANT: This is an orchestration question. Context has been filtered to pipelines, notebooks, and execution chains.";
+    }
+    systemPrompt += "\n\nCONTEXT:\n" + contextStr;
 
-    // 7. Build messages: chat history + current question
+    // 10. Build messages: chat history + current question
     const messages = [];
-    // Include last N history messages (keep it lean)
     const historySlice = chatHistory.slice(-10);
     for (const msg of historySlice) {
       if (msg.role && msg.content) messages.push({ role: msg.role, content: msg.content });
     }
     messages.push({ role: "user", content: question });
 
-    // 8. Call Claude
+    // 11. Call Claude
     const { status, data } = await callClaude(apiKey, messages, systemPrompt, DEFAULT_MAX_TOKENS);
 
-    // 9. Return response with retrieval metadata
+    // 12. Return response with retrieval + classification metadata
     const responseBody = { ...data };
     responseBody._rag = {
+      classification,
       chunks_retrieved: topChunks.length,
+      search_pool_size: searchPool.length,
       top_scores: topChunks.slice(0, 5).map(c => ({ id: c.id, type: c.chunk_type, score: +c.score.toFixed(3) })),
       vectors_total: vectors.length,
     };
+    if (typeFilter) {
+      responseBody._rag.context_note = `Context filtered to: ${[...typeFilter].join(", ")}`;
+    }
 
     context.res = { status, headers: { "Content-Type": "application/json" }, body: responseBody };
   } catch (err) {
