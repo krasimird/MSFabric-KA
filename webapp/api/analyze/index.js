@@ -140,6 +140,7 @@ function chunkToText(chunk) {
   const parts = [];
   if (chunk.type) parts.push(`type: ${chunk.type}`);
   if (chunk.id) parts.push(`id: ${chunk.id}`);
+  if (chunk.workspace) parts.push(`workspace: ${chunk.workspace}`);
   if (chunk.table) parts.push(`table: ${chunk.table}`);
   if (chunk.table_name) parts.push(`table: ${chunk.table_name}`);
   if (chunk.lakehouse) parts.push(`lakehouse: ${chunk.lakehouse}`);
@@ -289,18 +290,21 @@ function buildExecutionChains(KB) {
 function buildWarehouseLineage(KB) {
   const chunks = [];
   if (!KB.schemas) return chunks;
-  // Build warehouse_id → name mapping
-  const whNameMap = {};
+  // Build warehouse_id → {name, workspace} mapping
+  const whInfoMap = {};
   if (KB.workspaces) {
     for (const ws of KB.workspaces) {
+      const wsName = ws.displayName || ws.name || '';
       for (const item of (ws.items || [])) {
-        if (item.type === 'Warehouse') whNameMap[item.id] = item.displayName || item.id;
+        if (item.type === 'Warehouse') whInfoMap[item.id] = { name: item.displayName || item.id, workspace: wsName };
       }
     }
   }
   for (const [itemId, val] of Object.entries(KB.schemas)) {
     if (!val || Array.isArray(val) || !val.item_type) continue;
-    const warehouseName = whNameMap[itemId] || '';
+    const whInfo = whInfoMap[itemId] || {};
+    const warehouseName = whInfo.name || '';
+    const workspace = whInfo.workspace || '';
     // Tables
     for (const tbl of (val.tables || [])) {
       chunks.push({
@@ -308,6 +312,7 @@ function buildWarehouseLineage(KB) {
         id: `${tbl.schema || "dbo"}.${tbl.name}`,
         warehouse_id: itemId,
         warehouse_name: warehouseName,
+        workspace: workspace,
         schema: tbl.schema || "dbo",
         name: tbl.name,
         columns: (tbl.columns || []).map(c => ({ name: c.name, dataType: c.dataType, nullable: c.nullable })),
@@ -321,6 +326,7 @@ function buildWarehouseLineage(KB) {
         id: `${vw.schema || "dbo"}.${vw.name}`,
         warehouse_id: itemId,
         warehouse_name: warehouseName,
+        workspace: workspace,
         schema: vw.schema || "dbo",
         name: vw.name,
         definition: (vw.definition || "").slice(0, 4000),
@@ -333,6 +339,7 @@ function buildWarehouseLineage(KB) {
         id: `${sp.schema || "dbo"}.${sp.name}`,
         warehouse_id: itemId,
         warehouse_name: warehouseName,
+        workspace: workspace,
         schema: sp.schema || "dbo",
         name: sp.name,
         definition: (sp.definition || "").slice(0, 4000),
@@ -561,7 +568,7 @@ function buildSemanticModelChunks(KB, itemLookup) {
       model_name: modelName, model_id: itemId, workspace: wsName,
       table_count: tableNames.length, measure_count: allMeasures.length,
       column_count: totalCols, relationship_count: relationships.length,
-      tables: tableNames,
+      tables: Array.from(tableNames),
       tables_detail: Object.fromEntries(Object.entries(tablesMap).map(([k, v]) => [k, {
         columns: v.columns, measure_count: v.measures.length, isCalculated: v.isCalculated,
       }])),
@@ -794,17 +801,20 @@ function buildCatalogChunks(allChunks) {
 
 
 // ── Assemble JSONL ──────────────────────────────────────────
-function assembleJSONL(lineageByTable, chains, warehouseChunks, extraChunkArrays) {
+function assembleJSONL(lineageByTable, chains, warehouseChunks, extraChunkArrays, tableWorkspaceMap) {
   const lines = [];
+  const wsMap = tableWorkspaceMap || {};
 
   // Table lineage chunks
   for (const [table, record] of Object.entries(lineageByTable)) {
     const fields = record.fields || [];
     const sourceTables = [...new Set(fields.map(f => f.source_table).filter(Boolean))];
     const transformTypes = [...new Set(fields.map(f => f.transformation_type).filter(Boolean))];
+    const workspace = wsMap[table] || "";
 
     lines.push(JSON.stringify({
       type: "table_lineage", id: table,
+      workspace: workspace,
       layer: record.layer || "", mode: record.mode || "",
       source_tables: sourceTables, field_count: fields.length,
       transformation_types: transformTypes,
@@ -815,7 +825,7 @@ function assembleJSONL(lineageByTable, chains, warehouseChunks, extraChunkArrays
     for (const f of fields) {
       lines.push(JSON.stringify({
         type: "field_detail", id: `${table}.${f.target_field}`,
-        table: table, layer: record.layer || "",
+        table: table, workspace: workspace, layer: record.layer || "",
         target_field: f.target_field, data_type: f.data_type || "",
         source_table: f.source_table || "", source_column: f.source_column || "",
         transformation_type: f.transformation_type || "",
@@ -995,7 +1005,8 @@ module.exports = async function (context, req) {
         const rp4 = buildReportChunks(KB4, il4);
         const cat4 = buildCatalogChunks([...wh4,...lh4,...br4,...sm4,...pi4,...nb4,...rp4]);
         log(`[${elapsed()}s] Assembling JSONL...`);
-        const jsonl4 = assembleJSONL(lineage4, chains4, wh4, [lh4,br4,sm4,pi4,nb4,rp4,cat4]);
+        const twm4 = {}; for (const c of lh4) { if (c.table_name && c.workspace) twm4[c.table_name] = c.workspace; }
+        const jsonl4 = assembleJSONL(lineage4, chains4, wh4, [lh4,br4,sm4,pi4,nb4,rp4,cat4], twm4);
         const lc = jsonl4.split("\n").length;
         context.res = {
           status: 200,
@@ -1028,7 +1039,8 @@ module.exports = async function (context, req) {
         const nb5 = buildNotebookChunks(KB5, il5);
         const rp5 = buildReportChunks(KB5, il5);
         const cat5 = buildCatalogChunks([...wh5,...lh5,...br5,...sm5,...pi5,...nb5,...rp5]);
-        const jsonl5 = assembleJSONL(lineage5, chains5, wh5, [lh5,br5,sm5,pi5,nb5,rp5,cat5]);
+        const twm5 = {}; for (const c of lh5) { if (c.table_name && c.workspace) twm5[c.table_name] = c.workspace; }
+        const jsonl5 = assembleJSONL(lineage5, chains5, wh5, [lh5,br5,sm5,pi5,nb5,rp5,cat5], twm5);
         log(`[${elapsed()}s] Uploading JSONL (${jsonl5.length} bytes)...`);
         await uploadBlob(JSONL_BLOB, jsonl5, log);
         log(`[${elapsed()}s] Upload done`);
@@ -1224,7 +1236,8 @@ module.exports = async function (context, req) {
     const extraChunkArrays = [lakehouseChunks, bronzeChunks, smChunks, pipelineChunks, notebookChunks, reportChunks, catalogChunks];
 
     log(`[${elapsed()}s] Step 6: Assembling JSONL...`);
-    const jsonl = assembleJSONL(lineageByTable, chains, warehouseChunks, extraChunkArrays);
+    const tableWorkspaceMap = {}; for (const c of lakehouseChunks) { if (c.table_name && c.workspace) tableWorkspaceMap[c.table_name] = c.workspace; }
+    const jsonl = assembleJSONL(lineageByTable, chains, warehouseChunks, extraChunkArrays, tableWorkspaceMap);
     const lineCount = jsonl.split("\n").length;
     log(`JSONL: ${lineCount} lines, ${jsonl.length} bytes.`);
 

@@ -209,10 +209,17 @@ async function main() {
   const allExtra = [...lakehouseChunks, ...bronzeChunks, ...smChunks, ...pipelineChunks, ...notebookChunks, ...reportChunks];
   const catalogChunks = safeBuilder("Catalog chunks", () => buildCatalogChunks([...warehouseChunks, ...allExtra]));
 
-  // 7. Assemble & upload JSONL
+  // 7. Build table→workspace map from lakehouse chunks (for field_detail & table_lineage)
+  const tableWorkspaceMap = {};
+  for (const c of lakehouseChunks) {
+    if (c.table_name && c.workspace) tableWorkspaceMap[c.table_name] = c.workspace;
+  }
+  log(`Table→workspace map: ${Object.keys(tableWorkspaceMap).length} entries.`);
+
+  // 8. Assemble & upload JSONL
   log("── Step 5: Assembling JSONL ──");
   const extraArrays = [lakehouseChunks, bronzeChunks, smChunks, pipelineChunks, notebookChunks, reportChunks, catalogChunks];
-  const jsonl = assembleJSONL(lineageByTable, chains, warehouseChunks, extraArrays);
+  const jsonl = assembleJSONL(lineageByTable, chains, warehouseChunks, extraArrays, tableWorkspaceMap);
   const lineCount = jsonl.split("\n").length;
   log(`JSONL: ${lineCount} lines, ${jsonl.length} bytes.`);
 
