@@ -5,17 +5,15 @@
  * Used by the UI to show "Last updated" and to poll after triggering pipeline.
  */
 
-let BlobServiceClient, DefaultAzureCredential;
+let BlobServiceClient;
 let moduleLoadError = null;
 try {
   ({ BlobServiceClient } = require("@azure/storage-blob"));
-  ({ DefaultAzureCredential } = require("@azure/identity"));
 } catch (err) {
   moduleLoadError = `Failed to load Azure SDK modules: ${err.message}`;
 }
 
 // ── Config ──────────────────────────────────────────────────
-const BLOB_ACCOUNT_URL = "https://sainspiritka.blob.core.windows.net";
 const CONTAINER = "gendwh-exports";
 const VECTORS_BLOB = "latest/gendwh_vectors.jsonl";
 const KNOWLEDGE_BLOB = "latest/gendwh_knowledge.jsonl";
@@ -23,13 +21,18 @@ const KNOWLEDGE_BLOB = "latest/gendwh_knowledge.jsonl";
 // ── Handler ─────────────────────────────────────────────────
 module.exports = async function (context, req) {
   if (moduleLoadError) {
-    context.res = { status: 500, body: { error: moduleLoadError } };
+    context.res = { status: 500, headers: { "Content-Type": "application/json" }, body: { error: moduleLoadError } };
+    return;
+  }
+
+  const connStr = process.env.BLOB_CONNECTION_STRING;
+  if (!connStr) {
+    context.res = { status: 500, headers: { "Content-Type": "application/json" }, body: { error: "BLOB_CONNECTION_STRING not configured" } };
     return;
   }
 
   try {
-    const cred = new DefaultAzureCredential();
-    const blobSvc = new BlobServiceClient(BLOB_ACCOUNT_URL, cred);
+    const blobSvc = BlobServiceClient.fromConnectionString(connStr);
     const container = blobSvc.getContainerClient(CONTAINER);
 
     // Get properties of both blobs in parallel

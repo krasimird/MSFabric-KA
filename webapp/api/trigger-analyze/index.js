@@ -7,43 +7,13 @@
  * Reads DevOps PAT from env var or Key Vault secret "devops-pat".
  */
 
-let DefaultAzureCredential, SecretClient;
-let moduleLoadError = null;
-try {
-  ({ DefaultAzureCredential } = require("@azure/identity"));
-  ({ SecretClient } = require("@azure/keyvault-secrets"));
-} catch (err) {
-  moduleLoadError = `Failed to load Azure SDK modules: ${err.message}`;
-}
 const https = require("https");
 
 // ── Config ──────────────────────────────────────────────────
-const KV_URL = "https://kv-ai-site-builder.vault.azure.net";
 const DEVOPS_ORG = "INSPIRITBG";
 const DEVOPS_PROJECT = "Fabric Pipelines";
 const PIPELINE_ID = 54; // KA-Analyze-Embed
 const DEVOPS_API_VERSION = "7.1";
-
-// ── Cached PAT ──────────────────────────────────────────────
-let cachedPat = null;
-
-async function getDevOpsPat(log) {
-  if (cachedPat) return cachedPat;
-  if (process.env.DEVOPS_PAT) {
-    cachedPat = process.env.DEVOPS_PAT;
-    return cachedPat;
-  }
-  try {
-    const cred = new DefaultAzureCredential();
-    const kv = new SecretClient(KV_URL, cred);
-    cachedPat = (await kv.getSecret("devops-pat")).value;
-    log("DevOps PAT loaded from Key Vault.");
-    return cachedPat;
-  } catch (err) {
-    log("KV fetch failed: " + err.message);
-    return null;
-  }
-}
 
 // ── Queue a pipeline run via DevOps REST API ────────────────
 function queuePipeline(pat, log) {
@@ -93,15 +63,10 @@ function queuePipeline(pat, log) {
 module.exports = async function (context, req) {
   const log = (...args) => context.log(...args);
 
-  if (moduleLoadError) {
-    context.res = { status: 500, body: { error: moduleLoadError } };
-    return;
-  }
-
   try {
-    const pat = await getDevOpsPat(log);
+    const pat = process.env.DEVOPS_PAT;
     if (!pat) {
-      context.res = { status: 500, body: { error: "DevOps PAT not configured" } };
+      context.res = { status: 500, headers: { "Content-Type": "application/json" }, body: { error: "DEVOPS_PAT not configured" } };
       return;
     }
 

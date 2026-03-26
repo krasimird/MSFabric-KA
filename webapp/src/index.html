@@ -611,7 +611,9 @@ async function triggerRefresh() {
 
   try {
     const resp = await fetch('/api/trigger-analyze', { method: 'POST' });
-    const data = await resp.json();
+    const text = await resp.text();
+    let data;
+    try { data = JSON.parse(text); } catch { data = { error: text || `HTTP ${resp.status}` }; }
     if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
 
     console.log('[Refresh] Pipeline triggered:', data);
