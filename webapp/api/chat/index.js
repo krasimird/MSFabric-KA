@@ -41,6 +41,27 @@ const CONTEXT_LEVELS = {
   BI:            new Set(["report_overview", "semantic_model_overview", "semantic_model_measures", "semantic_model_relationships"]),
   ORCHESTRATION: new Set(["pipeline_overview", "notebook_overview", "execution_chain"]),
   BRONZE_META:   new Set(["bronze_meta", "lakehouse_table"]),
+  // Tree-based levels (resolve to custom filter functions in LEVEL_FILTER_FN)
+  MEDALLION: null, BRONZE: null, SILVER: null, SILVER_RAW: null, SILVER_STG: null,
+  GOLD: null, PLATINUM: null, SEMANTIC_MODELS: null, REPORTS: null,
+  PIPELINES: null, NOTEBOOKS: null, WORKSPACES: null,
+};
+
+// ── Advanced filter functions for tree-based levels ──────────
+const ZONE_PATTERN = { BRONZE: /bronze/i, SILVER_RAW: /silver.?raw/i, SILVER_STG: /silver.?(stg|stage)/i, GOLD: /gold/i, PLATINUM: /platinum|cdwh/i };
+const LEVEL_FILTER_FN = {
+  BRONZE:     v => ZONE_PATTERN.BRONZE.test(v.zone || v.data_zone || ''),
+  SILVER_RAW: v => ZONE_PATTERN.SILVER_RAW.test(v.zone || v.data_zone || ''),
+  SILVER_STG: v => ZONE_PATTERN.SILVER_STG.test(v.zone || v.data_zone || ''),
+  GOLD:       v => ZONE_PATTERN.GOLD.test(v.zone || v.data_zone || ''),
+  PLATINUM:   v => ZONE_PATTERN.PLATINUM.test(v.zone || v.data_zone || ''),
+  SILVER:     v => LEVEL_FILTER_FN.SILVER_RAW(v) || LEVEL_FILTER_FN.SILVER_STG(v),
+  MEDALLION:  v => LEVEL_FILTER_FN.BRONZE(v) || LEVEL_FILTER_FN.SILVER(v) || LEVEL_FILTER_FN.GOLD(v) || LEVEL_FILTER_FN.PLATINUM(v),
+  SEMANTIC_MODELS: v => (v.chunk_type || '').startsWith('semantic_model'),
+  REPORTS:    v => (v.chunk_type || '').startsWith('report'),
+  PIPELINES:  v => (v.chunk_type || '').startsWith('pipeline'),
+  NOTEBOOKS:  v => (v.chunk_type || '').startsWith('notebook'),
+  WORKSPACES: v => !!(v.workspace),
 };
 
 const CLASSIFIER_PROMPT = `Classify this data warehouse question into exactly ONE category. Reply with ONLY the category name, nothing else.
@@ -320,7 +341,8 @@ module.exports = async function (context, req) {
 
     // 2. Classify the question (or use explicit override)
     let classification;
-    if (requestedLevel && CONTEXT_LEVELS.hasOwnProperty(requestedLevel)) {
+    const isKnownLevel = requestedLevel && (CONTEXT_LEVELS.hasOwnProperty(requestedLevel) || requestedLevel.startsWith('WS_'));
+    if (isKnownLevel) {
       classification = requestedLevel;
       log(`[RAG] Context level override: ${classification}`);
     } else {
@@ -360,10 +382,18 @@ module.exports = async function (context, req) {
     log(`[RAG] Query embedded (${queryEmbedding.length} dims)`);
 
     // 6. Filter vectors by classification
+    let searchPool;
     const typeFilter = CONTEXT_LEVELS[classification];
-    const searchPool = typeFilter
-      ? vectors.filter(v => typeFilter.has(v.chunk_type))
-      : vectors;
+    if (typeFilter instanceof Set) {
+      searchPool = vectors.filter(v => typeFilter.has(v.chunk_type));
+    } else if (LEVEL_FILTER_FN[classification]) {
+      searchPool = vectors.filter(LEVEL_FILTER_FN[classification]);
+    } else if (classification.startsWith('WS_')) {
+      const wsName = classification.slice(3);
+      searchPool = vectors.filter(v => (v.workspace || '') === wsName);
+    } else {
+      searchPool = vectors;
+    }
     log(`[RAG] Search pool: ${searchPool.length}/${vectors.length} vectors (filter: ${classification})`);
 
     // 7. Cosine similarity → top-K on filtered pool
@@ -409,8 +439,10 @@ module.exports = async function (context, req) {
       top_scores: topChunks.slice(0, 5).map(c => ({ id: c.id, type: c.chunk_type, score: +c.score.toFixed(3) })),
       vectors_total: vectors.length,
     };
-    if (typeFilter) {
+    if (typeFilter instanceof Set) {
       responseBody._rag.context_note = `Context filtered to: ${[...typeFilter].join(", ")}`;
+    } else if (LEVEL_FILTER_FN[classification] || classification.startsWith('WS_')) {
+      responseBody._rag.context_note = `Context filtered by: ${classification}`;
     }
 
     context.res = { status, headers: { "Content-Type": "application/json" }, body: responseBody };

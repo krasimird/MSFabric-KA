@@ -17,32 +17,66 @@
       --teal: #1C8D7A; --teal-light: #e6f5f2; --teal-dark: #156d5e;
       --bg: #f3f2f1; --surface: #ffffff; --text: #323130; --text-muted: #605e5c;
       --border: #edebe9; --user-bg: #e6f5f2; --assistant-bg: #ffffff;
-      --sidebar-w: 280px; --header-h: 56px; --input-h: 72px;
+      --sidebar-w: 280px; --right-w: 280px; --header-h: 56px; --input-h: 72px;
     }
     html, body { height: 100%; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: var(--bg); color: var(--text); }
 
     /* ── Layout ───────────────────────────────────────────────── */
     .app { display: flex; height: 100vh; overflow: hidden; }
 
-    /* ── Sidebar ──────────────────────────────────────────────── */
+    /* ── Left Panel (Context Tree) ───────────────────────────── */
     .sidebar {
       width: var(--sidebar-w); background: var(--surface); border-right: 1px solid var(--border);
       display: flex; flex-direction: column; flex-shrink: 0; overflow-y: auto;
     }
     .sidebar-header { padding: 16px; border-bottom: 1px solid var(--border); }
     .sidebar-header h2 { font-size: 14px; color: var(--teal); text-transform: uppercase; letter-spacing: .5px; }
+
+    /* Tree styles */
+    .ctx-tree { padding: 8px 0; flex: 1; overflow-y: auto; }
+    .tree-node { user-select: none; }
+    .tree-row {
+      display: flex; align-items: center; gap: 4px; padding: 6px 12px; cursor: pointer;
+      font-size: 13px; color: var(--text); transition: background .12s;
+      border-left: 3px solid transparent;
+    }
+    .tree-row:hover { background: var(--teal-light); }
+    .tree-row.active { background: var(--teal-light); border-left-color: var(--teal); font-weight: 600; color: var(--teal); }
+    .tree-toggle {
+      width: 16px; text-align: center; font-size: 9px; color: var(--text-muted);
+      flex-shrink: 0; transition: transform .2s; display: inline-block;
+    }
+    .tree-toggle.expanded { transform: rotate(90deg); }
+    .tree-toggle.leaf { visibility: hidden; }
+    .tree-icon { flex-shrink: 0; font-size: 14px; }
+    .tree-label { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .tree-count { font-size: 10px; color: var(--text-muted); flex-shrink: 0; }
+    .tree-children { display: none; }
+    .tree-children.expanded { display: block; }
+    .tree-children .tree-row { padding-left: 28px; }
+    .tree-children .tree-children .tree-row { padding-left: 44px; }
+    .tree-children .tree-children .tree-children .tree-row { padding-left: 60px; }
+
+    /* ── Right Panel ─────────────────────────────────────────── */
+    .right-panel {
+      width: var(--right-w); background: var(--surface); border-left: 1px solid var(--border);
+      display: flex; flex-direction: column; flex-shrink: 0; overflow-y: auto;
+    }
+    .right-panel-header { padding: 16px; border-bottom: 1px solid var(--border); }
+    .right-panel-header h2 { font-size: 14px; color: var(--teal); text-transform: uppercase; letter-spacing: .5px; }
+    .right-section { padding: 12px 16px; border-top: 1px solid var(--border); }
+    .right-section h3 { font-size: 12px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 8px; }
     .stats-grid { padding: 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .stat-card { background: var(--teal-light); border-radius: 8px; padding: 12px; text-align: center; }
     .stat-card .value { font-size: 22px; font-weight: 700; color: var(--teal); }
     .stat-card .label { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
-    .sidebar-section { padding: 12px 16px; border-top: 1px solid var(--border); }
-    .sidebar-section h3 { font-size: 12px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 8px; }
     .quick-btn {
       display: block; width: 100%; text-align: left; padding: 8px 10px; margin-bottom: 4px;
       border: 1px solid var(--border); border-radius: 6px; background: var(--surface);
       cursor: pointer; font-size: 13px; color: var(--text); transition: background .15s;
     }
     .quick-btn:hover { background: var(--teal-light); border-color: var(--teal); }
+
     .data-status { padding: 12px 16px; font-size: 12px; color: var(--text-muted); border-top: 1px solid var(--border); margin-top: auto; }
     .data-status .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
     .dot-ok { background: var(--teal); } .dot-err { background: #d13438; } .dot-loading { background: #f7a93b; }
@@ -180,12 +214,6 @@
       min-height: 44px; max-height: 120px; outline: none; transition: border-color .15s;
     }
     .input-area textarea:focus { border-color: var(--teal); }
-    #contextLevel {
-      height: 44px; border: 1px solid var(--border); border-radius: 8px;
-      padding: 0 10px; font-size: 13px; font-family: inherit; background: var(--surface);
-      cursor: pointer; outline: none; transition: border-color .15s; min-width: 140px;
-    }
-    #contextLevel:focus { border-color: var(--teal); }
     .send-btn {
       background: var(--teal); color: #fff; border: none; border-radius: 8px;
       padding: 10px 20px; font-size: 14px; font-weight: 600; cursor: pointer;
@@ -234,11 +262,19 @@
     .pipeline-node-popup pre { background: #f6f6f6; padding: 6px 8px; border-radius: 4px; overflow-x: auto; font-size: 11px; margin: 4px 0; white-space: pre-wrap; }
     .pipeline-node-popup .close-popup { float: right; cursor: pointer; color: var(--text-muted); font-size: 16px; line-height: 1; }
 
+    .menu-toggle-right {
+      display: none; background: none; border: none; color: #fff; font-size: 22px;
+      cursor: pointer; margin-left: auto; padding: 4px;
+    }
+
     /* ── Mobile ───────────────────────────────────────────────── */
     @media (max-width: 768px) {
       .sidebar { position: fixed; left: -300px; top: 0; bottom: 0; z-index: 100; transition: left .25s; box-shadow: 2px 0 12px rgba(0,0,0,.15); }
       .sidebar.open { left: 0; }
+      .right-panel { position: fixed; right: -300px; top: 0; bottom: 0; z-index: 100; transition: right .25s; box-shadow: -2px 0 12px rgba(0,0,0,.15); }
+      .right-panel.open { right: 0; }
       .menu-toggle { display: block; }
+      .menu-toggle-right { display: block; }
       .message { max-width: 95%; }
       .prompts-drawer { display: none; }
     }
@@ -246,44 +282,12 @@
 </head>
 <body>
 <div class="app">
-  <!-- Sidebar -->
+  <!-- Left Panel: Context Tree -->
   <aside class="sidebar" id="sidebar">
-    <div class="sidebar-header"><h2>📊 Platform Stats</h2></div>
-    <div class="stats-grid" id="statsGrid">
-      <div class="stat-card"><div class="value" id="statWorkspaces">–</div><div class="label">Workspaces</div></div>
-      <div class="stat-card"><div class="value" id="statItems">–</div><div class="label">Items</div></div>
-      <div class="stat-card"><div class="value" id="statTables">–</div><div class="label">Tables</div></div>
-      <div class="stat-card"><div class="value" id="statColumns">–</div><div class="label">Columns</div></div>
-      <div class="stat-card"><div class="value" id="statPipelines">–</div><div class="label">Pipelines</div></div>
-      <div class="stat-card"><div class="value" id="statDefinitions">–</div><div class="label">Definitions</div></div>
-    </div>
-    <div class="sidebar-section">
-      <h3>Quick Questions</h3>
-      <button class="quick-btn" data-q="What tables are in the platform and how are they organized?">📋 Platform overview</button>
-      <button class="quick-btn" data-q="Show me all pipelines and their activities">🔄 Pipeline summary</button>
-      <button class="quick-btn" data-q="What stored procedures exist in the warehouses?">🏭 Warehouse procedures</button>
-      <button class="quick-btn" data-q="Генерирай Data Lineage Excel">📥 Generate Data Lineage Excel</button>
-      <button class="quick-btn" data-q="Генерирай Data Dictionary Excel">📥 Generate Data Dictionary</button>
-      <button class="quick-btn" data-q="Генерирай Business Glossary">📥 Generate Business Glossary</button>
-    </div>
-    <div class="analysis-section" id="analysisSection" style="display:none;">
-      <h3>🧠 AI Analysis</h3>
-      <div class="progress-bar"><div class="progress-fill" id="analysisProgress"></div></div>
-      <div class="analysis-status" id="analysisStatus">Ready</div>
-    </div>
-    <div class="usage-section" id="usageSection">
-      <h3>💰 API Usage (Today)</h3>
-      <div class="usage-grid">
-        <div class="usage-card"><div class="uval" id="uQueries">0</div><div class="ulbl">Queries</div></div>
-        <div class="usage-card"><div class="uval" id="uCost">$0.00</div><div class="ulbl">Cost</div></div>
-        <div class="usage-card"><div class="uval" id="uInput">0</div><div class="ulbl">Input tokens</div></div>
-        <div class="usage-card"><div class="uval" id="uOutput">0</div><div class="ulbl">Output tokens</div></div>
-      </div>
-      <div class="usage-history" id="usageHistory"></div>
-    </div>
-    <button class="prompts-drawer-btn" id="promptsDrawerBtn">📋 Примерни промптове →</button>
+    <div class="sidebar-header"><h2>🎯 Context Scope</h2></div>
+    <div class="ctx-tree" id="ctxTree"></div>
     <div class="data-status" id="dataStatus"><span class="dot dot-loading"></span> Loading data…</div>
-    <div style="padding:6px 16px 10px;border-top:1px solid var(--border);margin-top:auto;">
+    <div style="padding:6px 16px 10px;border-top:1px solid var(--border);">
       <div id="kbLastUpdated" style="color:var(--text-muted);font-size:10px;margin-bottom:4px;"></div>
       <button id="refreshKbBtn" onclick="triggerRefresh()" style="background:none;border:none;color:var(--text-muted);font-size:11px;cursor:pointer;padding:2px 0;opacity:.7;transition:opacity .15s;" onmouseenter="this.style.opacity='1'" onmouseleave="this.style.opacity='.7'" title="Trigger knowledge base refresh pipeline">🔄 Refresh Knowledge Base</button>
       <button onclick="runDiag()" id="diagBtn" style="background:none;border:none;color:var(--text-muted);font-size:9px;cursor:pointer;padding:1px 0;opacity:.5;" title="Run step-by-step diagnostic">🔬 Diagnose</button>
@@ -359,31 +363,60 @@
     <header class="header">
       <button class="menu-toggle" id="menuToggle">☰</button>
       <div class="logo">GenDWH Knowledge Assistant <span>powered by Claude</span></div>
+      <button class="menu-toggle-right" id="menuToggleRight">≡</button>
     </header>
 
     <div class="chat-area" id="chatArea">
       <div class="welcome">
         <h2>👋 Welcome</h2>
         <p>Ask anything about the GenDWH Data Warehouse platform — tables, pipelines, lineage, schemas, notebooks, and more.</p>
-        <p style="margin-top:12px;font-size:13px;">Data is loaded from the latest extraction export. Try a quick question from the sidebar or type your own below.</p>
+        <p style="margin-top:12px;font-size:13px;">Select a context scope from the left panel, or type your question below.</p>
       </div>
     </div>
 
     <div class="input-area">
       <textarea id="userInput" placeholder="Ask about your data warehouse… (Enter to send, Shift+Enter for new line)" rows="1"></textarea>
-      <select id="contextLevel" title="Context routing level">
-        <option value="">🤖 Auto</option>
-        <option value="FULL">🌐 Full</option>
-        <option value="INVENTORY">📊 Inventory</option>
-        <option value="LINEAGE">🔗 Lineage</option>
-        <option value="WAREHOUSE">🏭 Warehouse</option>
-        <option value="BI">📈 BI / Reports</option>
-        <option value="ORCHESTRATION">⚙️ Orchestration</option>
-        <option value="BRONZE_META">🥉 Bronze Meta</option>
-      </select>
       <button class="send-btn" id="sendBtn">Send</button>
     </div>
   </div>
+
+  <!-- Right Panel -->
+  <aside class="right-panel" id="rightPanel">
+    <div class="right-panel-header"><h2>📊 Platform Stats</h2></div>
+    <div class="stats-grid" id="statsGrid">
+      <div class="stat-card"><div class="value" id="statWorkspaces">–</div><div class="label">Workspaces</div></div>
+      <div class="stat-card"><div class="value" id="statItems">–</div><div class="label">Items</div></div>
+      <div class="stat-card"><div class="value" id="statTables">–</div><div class="label">Tables</div></div>
+      <div class="stat-card"><div class="value" id="statColumns">–</div><div class="label">Columns</div></div>
+      <div class="stat-card"><div class="value" id="statPipelines">–</div><div class="label">Pipelines</div></div>
+      <div class="stat-card"><div class="value" id="statDefinitions">–</div><div class="label">Definitions</div></div>
+    </div>
+    <div class="right-section">
+      <h3>Quick Questions</h3>
+      <button class="quick-btn" data-q="What tables are in the platform and how are they organized?">📋 Platform overview</button>
+      <button class="quick-btn" data-q="Show me all pipelines and their activities">🔄 Pipeline summary</button>
+      <button class="quick-btn" data-q="What stored procedures exist in the warehouses?">🏭 Warehouse procedures</button>
+      <button class="quick-btn" data-q="Генерирай Data Lineage Excel">📥 Generate Data Lineage Excel</button>
+      <button class="quick-btn" data-q="Генерирай Data Dictionary Excel">📥 Generate Data Dictionary</button>
+      <button class="quick-btn" data-q="Генерирай Business Glossary">📥 Generate Business Glossary</button>
+    </div>
+    <div class="analysis-section" id="analysisSection" style="display:none;">
+      <h3>🧠 AI Analysis</h3>
+      <div class="progress-bar"><div class="progress-fill" id="analysisProgress"></div></div>
+      <div class="analysis-status" id="analysisStatus">Ready</div>
+    </div>
+    <div class="usage-section" id="usageSection">
+      <h3>💰 API Usage (Today)</h3>
+      <div class="usage-grid">
+        <div class="usage-card"><div class="uval" id="uQueries">0</div><div class="ulbl">Queries</div></div>
+        <div class="usage-card"><div class="uval" id="uCost">$0.00</div><div class="ulbl">Cost</div></div>
+        <div class="usage-card"><div class="uval" id="uInput">0</div><div class="ulbl">Input tokens</div></div>
+        <div class="usage-card"><div class="uval" id="uOutput">0</div><div class="ulbl">Output tokens</div></div>
+      </div>
+      <div class="usage-history" id="usageHistory"></div>
+    </div>
+    <button class="prompts-drawer-btn" id="promptsDrawerBtn">📋 Примерни промптове →</button>
+  </aside>
 </div>
 
 <script>
@@ -467,7 +500,135 @@ const chatArea  = document.getElementById('chatArea');
 const userInput = document.getElementById('userInput');
 const sendBtn   = document.getElementById('sendBtn');
 const sidebar   = document.getElementById('sidebar');
+const rightPanel= document.getElementById('rightPanel');
 const menuToggle= document.getElementById('menuToggle');
+const menuToggleRight = document.getElementById('menuToggleRight');
+
+// ── Active context level (set by tree) ────────────────────────
+let activeContextLevel = '';  // '' = Auto
+
+// ── Context Hierarchy Tree ────────────────────────────────────
+const TREE_DEF = [
+  { id: 'FULL', icon: '🌐', label: 'Full Solution', children: [
+    { id: 'MEDALLION', icon: '🏅', label: 'Medallion', children: [
+      { id: 'BRONZE', icon: '🥉', label: 'Bronze' },
+      { id: 'SILVER', icon: '🥈', label: 'Silver', children: [
+        { id: 'SILVER_RAW', icon: '', label: 'SilverRaw' },
+        { id: 'SILVER_STG', icon: '', label: 'SilverStaging' },
+      ]},
+      { id: 'GOLD', icon: '🥇', label: 'Gold' },
+      { id: 'PLATINUM', icon: '💎', label: 'Platinum' },
+    ]},
+    { id: 'BI', icon: '📈', label: 'BI Frontend', children: [
+      { id: 'SEMANTIC_MODELS', icon: '', label: 'Semantic Models' },
+      { id: 'REPORTS', icon: '', label: 'Reports' },
+    ]},
+    { id: 'ORCHESTRATION', icon: '⚙️', label: 'Orchestration', children: [
+      { id: 'PIPELINES', icon: '', label: 'Pipelines' },
+      { id: 'NOTEBOOKS', icon: '', label: 'Notebooks' },
+    ]},
+    { id: 'WORKSPACES', icon: '🏢', label: 'Workspaces', children: [
+      { id: 'WS_GenDWH_Dev_WS_D', icon: '', label: 'GenDWH_Dev_WS_D' },
+      { id: 'WS_GenDWH_Data_WS_D', icon: '', label: 'GenDWH_Data_WS_D' },
+      { id: 'WS_GenDWH_Controlling_UWS_D', icon: '', label: 'GenDWH_Controlling_UWS_D' },
+      { id: 'WS_GenDWH_Underwriting_UWS', icon: '', label: 'GenDWH_Underwriting_UWS' },
+    ]},
+  ]},
+];
+
+function countChunksForNode(nodeId) {
+  if (!KNOWLEDGE || KNOWLEDGE.length === 0) return 0;
+  if (nodeId === 'FULL') return KNOWLEDGE.length;
+  const zoneMatch = { BRONZE: 'bronze', SILVER_RAW: 'silverraw', SILVER_STG: 'silverstg', GOLD: 'gold', PLATINUM: 'platinum' };
+  if (zoneMatch[nodeId]) {
+    const z = zoneMatch[nodeId];
+    return KNOWLEDGE.filter(c => (c.zone || c.data_zone || '').toLowerCase().replace(/[_ ]/g, '').includes(z)).length;
+  }
+  if (nodeId === 'MEDALLION') return ['BRONZE','SILVER_RAW','SILVER_STG','GOLD','PLATINUM'].reduce((s, n) => s + countChunksForNode(n), 0);
+  if (nodeId === 'SILVER') return countChunksForNode('SILVER_RAW') + countChunksForNode('SILVER_STG');
+  if (nodeId === 'SEMANTIC_MODELS') return KNOWLEDGE.filter(c => (c.type || '').startsWith('semantic_model')).length;
+  if (nodeId === 'REPORTS') return KNOWLEDGE.filter(c => (c.type || '').startsWith('report')).length;
+  if (nodeId === 'BI') return countChunksForNode('SEMANTIC_MODELS') + countChunksForNode('REPORTS');
+  if (nodeId === 'PIPELINES') return KNOWLEDGE.filter(c => (c.type || '').startsWith('pipeline')).length;
+  if (nodeId === 'NOTEBOOKS') return KNOWLEDGE.filter(c => (c.type || '').startsWith('notebook')).length;
+  if (nodeId === 'ORCHESTRATION') return countChunksForNode('PIPELINES') + countChunksForNode('NOTEBOOKS');
+  if (nodeId.startsWith('WS_')) {
+    const ws = nodeId.slice(3);
+    return KNOWLEDGE.filter(c => (c.workspace || '') === ws).length;
+  }
+  if (nodeId === 'WORKSPACES') {
+    return KNOWLEDGE.filter(c => c.workspace).length;
+  }
+  return 0;
+}
+
+function renderTree(nodes, container) {
+  container.innerHTML = '';
+  function buildNode(node) {
+    const el = document.createElement('div');
+    el.className = 'tree-node';
+    const row = document.createElement('div');
+    row.className = 'tree-row' + (node.id === 'FULL' ? ' active' : '');
+    row.dataset.nodeId = node.id;
+
+    const toggle = document.createElement('span');
+    toggle.className = 'tree-toggle' + (node.children ? '' : ' leaf');
+    toggle.textContent = '▶';
+    if (node.children && node.id === 'FULL') toggle.classList.add('expanded');
+
+    const icon = document.createElement('span');
+    icon.className = 'tree-icon';
+    icon.textContent = node.icon;
+
+    const label = document.createElement('span');
+    label.className = 'tree-label';
+    label.textContent = node.label;
+
+    const count = document.createElement('span');
+    count.className = 'tree-count';
+    count.dataset.countFor = node.id;
+
+    row.appendChild(toggle);
+    if (node.icon) row.appendChild(icon);
+    row.appendChild(label);
+    row.appendChild(count);
+    el.appendChild(row);
+
+    if (node.children) {
+      const childrenDiv = document.createElement('div');
+      childrenDiv.className = 'tree-children' + (node.id === 'FULL' ? ' expanded' : '');
+      for (const child of node.children) childrenDiv.appendChild(buildNode(child));
+      el.appendChild(childrenDiv);
+    }
+
+    // Click to select
+    row.addEventListener('click', (e) => {
+      e.stopPropagation();
+      // Toggle collapse
+      if (node.children) {
+        const childrenDiv = el.querySelector(':scope > .tree-children');
+        childrenDiv.classList.toggle('expanded');
+        toggle.classList.toggle('expanded');
+      }
+      // Set active
+      document.querySelectorAll('.tree-row.active').forEach(r => r.classList.remove('active'));
+      row.classList.add('active');
+      activeContextLevel = node.id === 'FULL' ? '' : node.id;
+    });
+
+    return el;
+  }
+  for (const node of nodes) container.appendChild(buildNode(node));
+}
+
+function updateTreeCounts() {
+  document.querySelectorAll('.tree-count').forEach(el => {
+    const n = countChunksForNode(el.dataset.countFor);
+    el.textContent = n > 0 ? n : '';
+  });
+}
+
+renderTree(TREE_DEF, document.getElementById('ctxTree'));
 
 // ── Data loading ───────────────────────────────────────────────
 async function loadData() {
@@ -502,6 +663,7 @@ async function loadData() {
         progressBar.style.width = '100%';
         analysisStatus.textContent = `✅ Knowledge base loaded — ${KNOWLEDGE.length} chunks`;
         console.log(`Loaded ${KNOWLEDGE.length} JSONL chunks from Blob.`);
+        updateTreeCounts();
       } else {
         throw new Error(`JSONL HTTP ${jsonlResp.status}`);
       }
@@ -685,6 +847,7 @@ async function triggerRefresh() {
           progress.style.width = '100%';
           const d = new Date(newTs);
           status.textContent = `✅ Knowledge base updated — ${KNOWLEDGE.length} chunks (${d.toLocaleTimeString('bg-BG', {hour:'2-digit',minute:'2-digit'})})`;
+          updateTreeCounts();
           break;
         }
       } catch (e) { console.warn('[Refresh poll] Error:', e.message); }
@@ -3097,9 +3260,8 @@ async function sendMessage(text) {
 
   try {
     sendBtn.disabled = true;
-    const ctxLevel = document.getElementById('contextLevel').value;
     const reqBody = { question: text, chatHistory };
-    if (ctxLevel) reqBody.contextLevel = ctxLevel;
+    if (activeContextLevel) reqBody.contextLevel = activeContextLevel;
 
     const resp = await fetch('/api/chat', {
       method: 'POST',
@@ -3210,9 +3372,10 @@ document.querySelectorAll('.quick-btn').forEach(btn => {
   btn.addEventListener('click', () => { userInput.value = btn.dataset.q; sendBtn.click(); });
 });
 
-// Mobile sidebar toggle
-menuToggle.addEventListener('click', () => sidebar.classList.toggle('open'));
-chatArea.addEventListener('click', () => sidebar.classList.remove('open'));
+// Mobile panel toggles
+menuToggle.addEventListener('click', () => { sidebar.classList.toggle('open'); rightPanel.classList.remove('open'); });
+menuToggleRight.addEventListener('click', () => { rightPanel.classList.toggle('open'); sidebar.classList.remove('open'); });
+chatArea.addEventListener('click', () => { sidebar.classList.remove('open'); rightPanel.classList.remove('open'); });
 
 // ── Prompts Drawer (push pattern) ───────────────────────────────
 const promptsDrawer = document.getElementById('promptsDrawer');
