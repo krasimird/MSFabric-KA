@@ -1,0 +1,42 @@
+# ──────────────────────────────────────────────────────────────
+# Knowledge Assistant — SWA Deployment Pipeline
+# Deploys webapp (static HTML + Azure Functions API) to
+# Azure Static Web Apps on every push to main.
+#
+# Replaces the GitHub Actions workflow.
+# ──────────────────────────────────────────────────────────────
+
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - webapp/**
+
+pr: none
+
+pool:
+  vmImage: "ubuntu-latest"
+
+steps:
+  - checkout: self
+
+  - task: NodeTool@0
+    displayName: "Install Node.js 18"
+    inputs:
+      versionSpec: "18.x"
+
+  - script: |
+      cd webapp/api && npm install --production
+    displayName: "Install API dependencies"
+
+  - task: AzureStaticWebApp@0
+    displayName: "Deploy to SWA"
+    inputs:
+      app_location: "webapp/src"
+      api_location: "webapp/api"
+      output_location: ""
+      skip_api_build: true
+      azure_static_web_apps_api_token: $(SWA_DEPLOYMENT_TOKEN)
+

@@ -268,7 +268,8 @@
     <button class="prompts-drawer-btn" id="promptsDrawerBtn">📋 Примерни промптове →</button>
     <div class="data-status" id="dataStatus"><span class="dot dot-loading"></span> Loading data…</div>
     <div style="padding:6px 16px 10px;border-top:1px solid var(--border);margin-top:auto;">
-      <button id="analyzeBtn" onclick="startAnalysis()" style="background:none;border:none;color:var(--text-muted);font-size:11px;cursor:pointer;padding:2px 0;opacity:.7;transition:opacity .15s;" onmouseenter="this.style.opacity='1'" onmouseleave="this.style.opacity='.7'" title="Re-analyze knowledge base on server">🔄 Re-analyze knowledge base</button>
+      <div id="kbLastUpdated" style="color:var(--text-muted);font-size:10px;margin-bottom:4px;"></div>
+      <button id="refreshKbBtn" onclick="triggerRefresh()" style="background:none;border:none;color:var(--text-muted);font-size:11px;cursor:pointer;padding:2px 0;opacity:.7;transition:opacity .15s;" onmouseenter="this.style.opacity='1'" onmouseleave="this.style.opacity='.7'" title="Trigger knowledge base refresh pipeline">🔄 Refresh Knowledge Base</button>
       <button onclick="runDiag()" id="diagBtn" style="background:none;border:none;color:var(--text-muted);font-size:9px;cursor:pointer;padding:1px 0;opacity:.5;" title="Run step-by-step diagnostic">🔬 Diagnose</button>
     </div>
   </aside>
@@ -573,118 +574,104 @@ async function runDiag() {
   alert(summary);
 }
 
-// ── AI Analysis trigger (server-side) ─────────────────────────
-async function startAnalysis() {
-  if (!KB) { alert('Data not loaded yet'); return; }
-  const btn = document.getElementById('analyzeBtn');
-  const progress = document.getElementById('analysisProgress');
+// ── KB Status: load last-updated timestamp ───────────────────
+let _kbStatusTimestamp = null; // ISO string of vectors blob lastModified
+async function loadKBStatus() {
+  try {
+    const resp = await fetch('/api/kb-status');
+    if (!resp.ok) return;
+    const data = await resp.json();
+    _kbStatusTimestamp = data.vectors?.lastModified || null;
+    updateKBStatusUI();
+  } catch (e) { console.warn('[KB Status] Failed:', e.message); }
+}
+
+function updateKBStatusUI() {
+  const el = document.getElementById('kbLastUpdated');
+  if (!el || !_kbStatusTimestamp) return;
+  const d = new Date(_kbStatusTimestamp);
+  el.textContent = `📦 Last updated: ${d.toLocaleDateString('bg-BG')} ${d.toLocaleTimeString('bg-BG', {hour:'2-digit',minute:'2-digit'})}`;
+}
+
+// ── Trigger DevOps pipeline + poll for completion ────────────
+let _refreshPolling = false;
+async function triggerRefresh() {
+  const btn = document.getElementById('refreshKbBtn');
   const status = document.getElementById('analysisStatus');
   const section = document.getElementById('analysisSection');
+  const progress = document.getElementById('analysisProgress');
+
+  if (_refreshPolling) return; // already running
+
   if (section) section.style.display = '';
   btn.disabled = true;
-  btn.textContent = '⏳ Analyzing…';
-  analysisReady = false;
+  btn.textContent = '⏳ Triggering…';
   progress.style.width = '5%';
-  status.textContent = 'Sending analysis request to server…';
-
-  let pass = 0;
-  let totalAnalyzed = 0, totalCached = 0, totalFailed = 0, totalQueries = 0;
+  status.textContent = 'Triggering pipeline…';
 
   try {
-    // Loop: keep calling /api/analyze until status is "complete" (incremental processing)
-    while (true) {
-      pass++;
-      status.textContent = `⏳ Pass ${pass}: analyzing queries on server…`;
+    const resp = await fetch('/api/trigger-analyze', { method: 'POST' });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
 
-      const resp = await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-      const text = await resp.text();
-      let result;
-      try { result = JSON.parse(text); } catch { result = { error: text || `HTTP ${resp.status}` }; }
+    console.log('[Refresh] Pipeline triggered:', data);
+    status.textContent = `⏳ Pipeline started (build #${data.buildId}). Waiting for completion…`;
+    progress.style.width = '15%';
+    btn.textContent = '⏳ Running…';
 
-      if (!resp.ok) throw new Error(result.error || `HTTP ${resp.status}`);
+    // Poll blob timestamp every 15s until it changes
+    _refreshPolling = true;
+    const startTimestamp = _kbStatusTimestamp;
+    let polls = 0;
+    const maxPolls = 30; // 30 × 15s = 7.5 min max
+    const pollInterval = 15000;
 
-      totalQueries = result.queries_total || totalQueries;
-      totalAnalyzed += result.queries_analyzed || 0;
-      totalCached = result.queries_cached || totalCached;
-      totalFailed += result.queries_failed || 0;
+    while (polls < maxPolls) {
+      await new Promise(r => setTimeout(r, pollInterval));
+      polls++;
+      try {
+        const sResp = await fetch('/api/kb-status');
+        if (!sResp.ok) continue;
+        const sData = await sResp.json();
+        const newTs = sData.vectors?.lastModified;
+        progress.style.width = Math.min(85, 15 + polls * 2.5) + '%';
+        status.textContent = `⏳ Waiting for pipeline… (${polls * 15}s elapsed)`;
 
-      const done = totalAnalyzed + totalCached + totalFailed;
-      const pct = totalQueries > 0 ? Math.min(85, Math.round((done / totalQueries) * 85)) : 10;
-      progress.style.width = pct + '%';
+        if (newTs && newTs !== startTimestamp) {
+          // Vectors blob has been updated — pipeline finished!
+          _kbStatusTimestamp = newTs;
+          updateKBStatusUI();
+          progress.style.width = '90%';
+          status.textContent = '✅ Pipeline complete! Reloading knowledge base…';
 
-      if (result.status === 'partial') {
-        const remaining = result.queries_remaining || (totalQueries - done);
-        status.textContent = `⏳ Pass ${pass} done (${result.elapsed_seconds}s) — ${done}/${totalQueries} queries processed, ${remaining} remaining…`;
-        console.log(`[Analysis] Pass ${pass}:`, result);
-        // Brief pause before next pass
-        await new Promise(r => setTimeout(r, 2000));
-        continue;
-      }
+          // Reload JSONL
+          const jsonlResp = await fetch(JSONL_URL + '?t=' + Date.now());
+          if (jsonlResp.ok) {
+            const jtext = await jsonlResp.text();
+            KNOWLEDGE = jtext.trim().split('\n').map(line => { try { return JSON.parse(line); } catch { return null; } }).filter(Boolean);
+            if (!KNOWLEDGE.some(c => c.type === 'semantic_model_overview')) buildSemanticModelChunks();
+            buildReportChunksClientSide();
+            buildCrossReferences();
+          }
 
-      // status === "complete"
-      console.log(`[Analysis] Complete after ${pass} pass(es):`, result);
-      break;
+          progress.style.width = '100%';
+          const d = new Date(newTs);
+          status.textContent = `✅ Knowledge base updated — ${KNOWLEDGE.length} chunks (${d.toLocaleTimeString('bg-BG', {hour:'2-digit',minute:'2-digit'})})`;
+          break;
+        }
+      } catch (e) { console.warn('[Refresh poll] Error:', e.message); }
     }
 
-    progress.style.width = '75%';
-    status.textContent = 'Loading updated knowledge base…';
-
-    // Reload JSONL from Blob
-    const jsonlResp = await fetch(JSONL_URL + '?t=' + Date.now());
-    if (jsonlResp.ok) {
-      const jtext = await jsonlResp.text();
-      KNOWLEDGE = jtext.trim().split('\n').map(line => { try { return JSON.parse(line); } catch { return null; } }).filter(Boolean);
+    if (polls >= maxPolls) {
+      status.textContent = '⏳ Pipeline may still be running. Check back later.';
     }
-
-    analysisReady = true;
-    // Only generate client-side chunks if server didn't already generate them
-    if (!KNOWLEDGE.some(c => c.type === 'semantic_model_overview')) buildSemanticModelChunks();
-    buildReportChunksClientSide(); // Adds detailed report_page chunks not in server JSONL
-    buildCrossReferences();
-
-    // ── Embedding phase: call /api/embed in a loop until all vectors are done ──
-    progress.style.width = '80%';
-    status.textContent = `⏳ Embedding vectors (${KNOWLEDGE.length} chunks)…`;
-    let embedPass = 0;
-    let totalEmbedded = 0;
-    while (true) {
-      embedPass++;
-      console.log(`[Embed] Pass ${embedPass}…`);
-      const embedResp = await fetch('/api/embed', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-      const embedText = await embedResp.text();
-      let embedResult;
-      try { embedResult = JSON.parse(embedText); } catch { embedResult = { error: embedText || `HTTP ${embedResp.status}` }; }
-
-      if (!embedResp.ok) {
-        console.error('[Embed] Error:', embedResult);
-        status.textContent = `⚠️ Analysis done but embedding failed: ${embedResult.error || 'unknown'}. Chunks are saved, vectors will catch up.`;
-        break;
-      }
-
-      totalEmbedded += embedResult.vectors_embedded_now || 0;
-      const remaining = embedResult.vectors_remaining || 0;
-      const pct = 80 + Math.min(18, Math.round((1 - remaining / Math.max(1, remaining + totalEmbedded)) * 18));
-      progress.style.width = pct + '%';
-      console.log(`[Embed] Pass ${embedPass}:`, embedResult);
-
-      if (embedResult.status === 'complete') {
-        status.textContent = `✅ Done — ${totalAnalyzed} analyzed, ${totalCached} cached, ${totalFailed} failed. ${KNOWLEDGE.length} chunks, ${embedResult.vectors_total} vectors.`;
-        break;
-      }
-
-      // Partial — more to embed
-      status.textContent = `⏳ Embedding pass ${embedPass}: ${totalEmbedded} embedded, ${remaining} remaining…`;
-      await new Promise(r => setTimeout(r, 1000));
-    }
-
-    progress.style.width = '100%';
-    btn.textContent = '🔄 Re-analyze knowledge base';
   } catch (err) {
-    status.textContent = '❌ Analysis failed: ' + err.message;
-    console.error('Analysis error:', err);
+    status.textContent = '❌ Trigger failed: ' + err.message;
+    console.error('[Refresh] Error:', err);
   } finally {
+    _refreshPolling = false;
     btn.disabled = false;
-    btn.textContent = '🔄 Re-analyze knowledge base';
+    btn.textContent = '🔄 Refresh Knowledge Base';
   }
 }
 
@@ -3219,6 +3206,7 @@ document.querySelectorAll('.prompt-send').forEach(btn => {
 
 // ── Init ───────────────────────────────────────────────────────
 loadData();
+loadKBStatus();
 updateUsageSummary();
 </script>
 </body>
